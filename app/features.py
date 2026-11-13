@@ -427,7 +427,7 @@ def install_features(app):
     @router.get('/admin/status')
     def admin_status(u=Depends(get_current_user),db=Depends(get_db)):
         if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        return {'users':db.query(models.User).count(),'pets':db.query(models.Pet).count(),'documents':db.query(models.Document).count(),'smtp_configured':bool(os.getenv('SMTP_HOST') and os.getenv('SMTP_FROM')),'ocr_configured':bool(os.getenv('GEMINI_API_KEY')),'push_configured':bool(os.getenv('VAPID_PRIVATE_KEY'))}
+        return {'users':db.query(models.User).count(),'pets':db.query(models.Pet).count(),'documents':db.query(models.Document).count(),'smtp_configured':bool(os.getenv('SMTP_HOST') and os.getenv('SMTP_FROM')),'ocr_configured':(Path(__file__).parent/'static/ocr/vendor/rus.traineddata.gz').is_file(),'push_configured':bool(os.getenv('VAPID_PRIVATE_KEY'))}
 
     @router.get('/admin/audit')
     def audit(u=Depends(get_current_user),db=Depends(get_db)):

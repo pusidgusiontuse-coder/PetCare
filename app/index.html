@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20261112-nav-bottom-1">
+  <link rel="stylesheet" href="/styles.css?v=20261114-local-ocr">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -288,14 +288,16 @@
       </div>
 
       <details class="secondary-details food-tools document-ai" id="document-recognition" open>
-        <summary>ИИ-распознавание документа</summary>
+        <summary>Распознавание печатного текста</summary>
         <div class="document-ai-body">
-          <p class="document-ai-intro">Печатный и рукописный текст. Неясные места будут помечены для проверки. Дозировки и даты обязательно сверяйте с оригиналом.</p>
+          <p class="document-ai-intro">Печатный текст на русском и английском. Фото обрабатывается на вашем устройстве и не отправляется сервисам распознавания. Рукописный текст пока не поддерживается. Даты, названия и дозировки сверяйте с оригиналом.</p>
           <label class="field" for="document-photo">Фото документа
             <input id="document-photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="document-photo-hint">
             <span class="document-ai-file-hint" id="document-photo-hint">Поддерживаются JPG, PNG и WebP (до 10 МБ).</span>
           </label>
-          <label class="document-ai-consent"><input id="ocr-consent" type="checkbox"><span>Согласен отправить фото Google Gemini для распознавания. На бесплатном тарифе Google может использовать данные для улучшения своих сервисов.</span></label>
+          <label class="field" for="ocr-rotation">Поворот фото
+            <select id="ocr-rotation"><option value="0">Без поворота</option><option value="90">90° по часовой стрелке</option><option value="180">180°</option><option value="270">90° против часовой стрелки</option></select>
+          </label>
           <div class="document-ai-actions">
             <button class="btn primary" id="recognize-button" type="button">Распознать текст</button>
             <button class="btn" id="copy-recognized" type="button" disabled>Скопировать текст</button>
@@ -594,6 +596,7 @@
 
 <div id="push-banner-stack" class="push-banner-stack" aria-live="assertive"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/static/local-ocr.js?v=20261114-1"></script>
 <script>
 // =====================================================================
 // 1. CORE HELPERS & API CLIENT (ZERO-STORAGE JWT + BACKEND SYNC)
@@ -3099,21 +3102,19 @@ setInterval(() => {
       return;
     }
 
-    if(!$('ocr-consent').checked){setStatus('Подтвердите отправку фото сервису распознавания.',true);return;}
     if(file.size>10*1024*1024){setStatus('Максимальный размер — 10 МБ.',true);return;}
-    const formData = new FormData();
-    formData.append('file', file);
 
     try {
       recognizeButton.disabled = true;
-      setStatus('Распознаём текст…');
-      const res = await apiFetch('/documents/recognize', {
-        method: 'POST',
-        body: formData
+      setStatus('Проверяем доступ…');
+      const access = await apiFetch('/billing/status');
+      if (!access.premium) throw new Error('Распознавание доступно в платной версии. Запросите доступ у администратора.');
+      const res = await window.PetCareOCR.recognize(file, {
+        rotation: Number($('ocr-rotation').value), progress: message => setStatus(message)
       });
       recognizedText.value = res?.text || '';
       updateButtons();
-      setStatus('Текст распознан. Проверьте рукописные фрагменты, названия, даты и дозировки перед использованием.');
+      setStatus((res.confidence < 65 ? 'Качество распознавания низкое. Лучше переснять документ. ' : 'Текст распознан. ') + 'Проверьте названия, даты и дозировки перед использованием.');
     } catch (err) {
       setStatus(err.message || 'Ошибка сервиса распознавания', true);
     } finally {
@@ -3933,6 +3934,6 @@ syncServerData().then(() => {
   scheduleNextExactPush();
 });
 </script>
-<script src="/static/enhancements.js?v=20261113-2"></script>
+<script src="/static/enhancements.js?v=20261114-ocr"></script>
 </body>
 </html>
