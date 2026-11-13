@@ -1,0 +1,4 @@
+Options -Indexes
+<FilesMatch "(^\.|\.py$|\.db$|\.json$)">
+    Require all denied
+</FilesMatch>

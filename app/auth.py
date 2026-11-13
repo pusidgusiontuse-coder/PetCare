@@ -1,0 +1,74 @@
+from datetime import datetime, timedelta
+from typing import Optional
+import re
+import uuid
+import bcrypt
+from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+from database import get_db, SessionLocal
+import models
+
+from settings import SECRET_KEY
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 дней
+
+security = HTTPBearer()
+
+def get_password_hash(password: str) -> str:
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    if not plain_password or not isinstance(hashed_password, str):
+        return False
+    if not re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}", hashed_password):
+        return False
+    try:
+        pwd_bytes = plain_password.encode('utf-8')
+        hash_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except (ValueError, TypeError):
+        return False
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, device: str = "Браузер") -> str:
+    claims=data.copy()
+    expiry=datetime.utcnow()+(expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    sid=uuid.uuid4().hex
+    with SessionLocal() as db:
+        user=db.get(models.User,int(claims["sub"]))
+        claims.update(exp=expiry,jti=sid,ver=user.token_version if user else 0)
+        db.add(models.LoginSession(id=sid,user_id=int(claims["sub"]),expires_at=expiry,device=device))
+        db.commit()
+    return jwt.encode(claims,SECRET_KEY,algorithm=ALGORITHM)
+
+def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> models.User:
+    token = credentials.credentials
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Не удалось подтвердить учетные данные",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        user_id_int = int(user_id)
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    user = db.query(models.User).filter(models.User.id == user_id_int).first()
+    if user is None or user.disabled or payload.get("ver") != user.token_version:
+        raise credentials_exception
+    session=db.get(models.LoginSession,payload.get("jti", ""))
+    if not session or session.user_id!=user.id or session.revoked or session.expires_at<=datetime.utcnow():
+        raise credentials_exception
+    request.state.session_id=session.id
+    return user

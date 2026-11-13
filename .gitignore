@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite*
+*.pem
+.venv/
+__pycache__/
+.pytest_cache/
+work/
+data/
+*.zip
+*.before-*
+bootstrap-admin.json
+ДОСТУП_АДМИНИСТРАТОРА.txt

@@ -1,0 +1,11 @@
+image: python:3.12-slim
+stages: [test]
+test:
+  stage: test
+  variables:
+    SECRET_KEY: 'ci-only-key-at-least-32-characters-do-not-use-in-production'
+    DATABASE_URL: 'sqlite:////tmp/petcare-ci.db'
+    ENABLE_DEMO_LOGIN: 'true'
+  script:
+    - pip install -r app/requirements.txt
+    - python -m pytest app/test_security_features.py app/test_main.py -q
