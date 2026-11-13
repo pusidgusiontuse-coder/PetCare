@@ -19,6 +19,13 @@ def require_ocr_configuration() -> tuple[str, str]:
     return key, model
 
 def check_response(response: httpx.Response):
+    if response.status_code == 400:
+        try:
+            error = response.json().get('error', {})
+        except ValueError:
+            error = {}
+        if error.get('status') == 'FAILED_PRECONDITION' and 'location' in str(error.get('message', '')).lower():
+            raise HTTPException(503, 'Google Gemini недоступен в регионе сервера сайта. Для распознавания нужно подключить сервер в поддерживаемой стране. Обратитесь к администратору.')
     if response.status_code in (402, 429):
         raise HTTPException(429, 'Бесплатный лимит Gemini исчерпан или сервис перегружен. Попробуйте позже; платная подмена отключена.')
     if response.status_code in (401, 403):
