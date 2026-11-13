@@ -149,15 +149,15 @@ def test_ocr_requires_paid_access(client):
 
 def test_no_paid_ocr_and_missing_key(monkeypatch):
     import asyncio
-    monkeypatch.delenv('OCR_API_KEY',raising=False)
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
     with pytest.raises(Exception) as e:asyncio.run(ocr.recognize_text(b'x','image/png'))
     assert e.value.status_code==503
-    monkeypatch.setenv('OCR_API_KEY','fake');monkeypatch.setenv('OCR_MODEL','paid-model')
+    monkeypatch.setenv('GEMINI_API_KEY','fake');monkeypatch.setenv('GEMINI_MODEL','paid-model')
     with pytest.raises(Exception) as e:asyncio.run(ocr.recognize_text(b'x','image/png'))
     assert e.value.status_code==503
 
 def test_missing_ocr_configuration_does_not_consume_quota(client, monkeypatch):
-    monkeypatch.delenv('OCR_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     account_id, _, headers = user(paid=True)
     with SessionLocal() as db:
         before = db.query(models.RequestQuota).count()
@@ -165,7 +165,7 @@ def test_missing_ocr_configuration_does_not_consume_quota(client, monkeypatch):
         response = client.post('/api/v1/documents/recognize', headers=headers,
                                files={'file': ('document.png', b'\x89PNG\r\n\x1a\n', 'image/png')})
         assert response.status_code == 503
-        assert 'OpenRouter' in response.json()['detail']
+        assert 'Google AI Studio' in response.json()['detail']
     with SessionLocal() as db:
         assert db.query(models.RequestQuota).count() == before
 
@@ -216,25 +216,44 @@ def test_unknown_email_is_generic_and_sends_nothing(client,mail):
 
 def test_ocr_transcription_and_free_metadata(monkeypatch):
     import asyncio,httpx
-    monkeypatch.setenv('OCR_API_KEY','test-key');monkeypatch.setenv('OCR_MODEL','test/vision:free')
-    response=httpx.Response(200,json={'choices':[{'finish_reason':'stop','message':{'content':'Рукописная запись: [неразборчиво]'}}]},request=httpx.Request('POST','https://openrouter.ai/api/v1/chat/completions'))
-    catalog=httpx.Response(200,json={'data':[{'id':'test/vision:free','architecture':{'input_modalities':['text','image']},'pricing':{'prompt':'0','completion':'0','image':'0'}}]},request=httpx.Request('GET','https://openrouter.ai/api/v1/models'))
-    mock=AsyncMock();mock.get.return_value=catalog;mock.post.return_value=response
+    monkeypatch.setenv('GEMINI_API_KEY','test-key')
+    monkeypatch.setenv('GEMINI_MODEL','gemini-3.5-flash-lite')
+    response=httpx.Response(200,json={'candidates':[{'finishReason':'STOP','content':{'parts':[{'thought':True,'text':'hidden thought'},{'text':'Рукописная запись: [неразборчиво]'}]}}]},request=httpx.Request('POST',ocr.API_BASE+'gemini-3.5-flash-lite:generateContent'))
+    metadata=httpx.Response(200,json={'supportedGenerationMethods':['generateContent']},request=httpx.Request('GET',ocr.API_BASE+'gemini-3.5-flash-lite'))
+    mock=AsyncMock();mock.get.return_value=metadata;mock.post.return_value=response
     with patch('ocr.httpx.AsyncClient') as factory:
         factory.return_value.__aenter__.return_value=mock
-        assert '[неразборчиво]' in asyncio.run(ocr.recognize_text(b'image','image/png'))
-    body=mock.post.call_args.kwargs['json'];assert body['model'].endswith(':free') and body['provider']['allow_fallbacks'] is False
-    assert 'дозировки' in body['messages'][0]['content']
+        result=asyncio.run(ocr.recognize_text(b'image','image/png'))
+    assert result=='Рукописная запись: [неразборчиво]'
+    args=mock.post.call_args
+    assert args.args[0]==ocr.API_BASE+'gemini-3.5-flash-lite:generateContent'
+    assert args.kwargs['headers']=={'x-goog-api-key':'test-key'}
+    body=args.kwargs['json']
+    assert 'дозировки' in body['systemInstruction']['parts'][0]['text']
+    assert body['contents'][0]['parts'][0]['inlineData']['mimeType']=='image/png'
+    assert 'tools' not in body
 
-def test_ocr_nonzero_pricing_stops_before_image_sent(monkeypatch):
+@pytest.mark.parametrize('model',['gemini-4-argon','gemini-flash-latest','../../other-api'])
+def test_ocr_paid_model_or_alias_stops_before_image_sent(monkeypatch,model):
+    import asyncio
+    from fastapi import HTTPException
+    monkeypatch.setenv('GEMINI_API_KEY','test-key');monkeypatch.setenv('GEMINI_MODEL',model)
+    with patch('ocr.httpx.AsyncClient') as factory:
+        with pytest.raises(HTTPException) as e:asyncio.run(ocr.recognize_text(b'image','image/png'))
+        assert e.value.status_code==503
+    factory.assert_not_called()
+
+@pytest.mark.parametrize('status,expected',[(401,503),(403,503),(404,503),(429,429),(503,502)])
+def test_gemini_errors_do_not_fallback_or_send_photo(monkeypatch,status,expected):
     import asyncio,httpx
-    monkeypatch.setenv('OCR_API_KEY','test');monkeypatch.setenv('OCR_MODEL','test/vision:free')
-    catalog=httpx.Response(200,json={'data':[{'id':'test/vision:free','architecture':{'input_modalities':['image']},'pricing':{'prompt':'0.01','completion':'0'}}]},request=httpx.Request('GET','https://openrouter.ai/api/v1/models'))
-    mock=AsyncMock();mock.get.return_value=catalog
+    from fastapi import HTTPException
+    monkeypatch.setenv('GEMINI_API_KEY','test-key');monkeypatch.setenv('GEMINI_MODEL','gemini-3.5-flash-lite')
+    mock=AsyncMock()
+    mock.get.return_value=httpx.Response(status,json={'error':{'message':'provider error'}},request=httpx.Request('GET',ocr.API_BASE+'gemini-3.5-flash-lite'))
     with patch('ocr.httpx.AsyncClient') as factory:
         factory.return_value.__aenter__.return_value=mock
-        with pytest.raises(Exception) as e:asyncio.run(ocr.recognize_text(b'image','image/png'))
-        assert e.value.status_code==503
+        with pytest.raises(HTTPException) as e:asyncio.run(ocr.recognize_text(b'image','image/png'))
+        assert e.value.status_code==expected
     mock.post.assert_not_called()
 
 def test_bootstrap_creates_one_admin_pet_without_overwriting_password(client):
