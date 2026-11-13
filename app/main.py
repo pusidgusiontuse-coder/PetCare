@@ -1619,7 +1619,7 @@ def _resolve_api_key() -> str:
     return cleaned
 
 
-from ocr import recognize_text
+from ocr import recognize_text, require_ocr_configuration
 
 
 @app.post("/api/v1/documents/recognize", tags=["Документы и ИИ-распознавание"], summary="ИИ-распознавание текста с фото ветеринарного документа через LLM Proxy")
@@ -1631,8 +1631,6 @@ async def recognize_document(
     from features import enforce_quota, premium
     if not premium(current_user):
         raise HTTPException(403, "ИИ-распознавание доступно в платной версии. Запросите доступ у администратора.")
-    enforce_quota(db, "ocr-user:"+str(current_user.id)+":"+datetime.utcnow().strftime("%Y%m%d"), 10)
-    enforce_quota(db, "ocr-global:"+datetime.utcnow().strftime("%Y%m%d"), 40)
     allowed_types = {"image/jpeg", "image/png", "image/webp"}
     if file.content_type not in allowed_types:
         raise HTTPException(415, "Поддерживаются JPG, PNG и WebP")
@@ -1651,6 +1649,9 @@ async def recognize_document(
     if len(photo) > limit:
         raise HTTPException(413, "Максимальный размер — 10 МБ")
 
+    require_ocr_configuration()
+    enforce_quota(db, "ocr-user:"+str(current_user.id)+":"+datetime.utcnow().strftime("%Y%m%d"), 10)
+    enforce_quota(db, "ocr-global:"+datetime.utcnow().strftime("%Y%m%d"), 40)
     try:
         text = await recognize_text(photo, file.content_type)
     except httpx.HTTPError as exc:

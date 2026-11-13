@@ -156,6 +156,19 @@ def test_no_paid_ocr_and_missing_key(monkeypatch):
     with pytest.raises(Exception) as e:asyncio.run(ocr.recognize_text(b'x','image/png'))
     assert e.value.status_code==503
 
+def test_missing_ocr_configuration_does_not_consume_quota(client, monkeypatch):
+    monkeypatch.delenv('OCR_API_KEY', raising=False)
+    account_id, _, headers = user(paid=True)
+    with SessionLocal() as db:
+        before = db.query(models.RequestQuota).count()
+    for _ in range(2):
+        response = client.post('/api/v1/documents/recognize', headers=headers,
+                               files={'file': ('document.png', b'\x89PNG\r\n\x1a\n', 'image/png')})
+        assert response.status_code == 503
+        assert 'OpenRouter' in response.json()['detail']
+    with SessionLocal() as db:
+        assert db.query(models.RequestQuota).count() == before
+
 def test_pwa_resources_and_no_private_cache(client):
     assert client.get('/manifest.webmanifest').json()['display']=='standalone'
     for size in (180,192,512):assert client.get(f'/static/icon-{size}.png').status_code==200

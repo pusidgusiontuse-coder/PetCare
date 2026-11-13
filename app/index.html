@@ -661,7 +661,7 @@ async function apiFetch(endpoint, options = {}) {
       if (!res.ok) throw new Error(data?.detail || ('Ошибка сервера: ' + res.status));
       return data;
     }
-    if (options.method && options.method !== 'GET') {
+    if (options.method && options.method !== 'GET' && endpoint !== '/documents/recognize') {
       setTimeout(()=>{notify('Не сохранено: '+err.message); if(authToken)syncServerData(true);},100);
     }
     throw err;

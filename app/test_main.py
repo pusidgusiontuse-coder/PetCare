@@ -332,7 +332,7 @@ class TestPetCareCoreAPI(unittest.TestCase):
         with patch(
             "main.recognize_text",
             new=AsyncMock(return_value="Паспорт питомца: прививка от бешенства"),
-        ):
+        ), patch("main.require_ocr_configuration", return_value=("test-key", "test/vision:free")):
             ok_resp = self.client.post(
                 "/api/v1/documents/recognize",
                 headers=self.headers1,
