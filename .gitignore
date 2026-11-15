@@ -17,3 +17,5 @@ bootstrap-admin.json
 
 # Rebuilt using tools/fetch_ocr_assets.py (pinned SHA-256 manifest).
 app/static/ocr/vendor/
+dist/
+reports/

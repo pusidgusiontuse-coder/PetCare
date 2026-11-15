@@ -1994,7 +1994,9 @@ def reset_pet_match_skips(
 
 @app.get("/api/v1/health", tags=["Системные маршруты"], summary="Проверка состояния сервера (Healthcheck)")
 def health_check():
-    return {"status": "ok", "service": "PetCare API v1"}
+    release_file = Path(__file__).resolve().parent.parent / "RELEASE"
+    return {"status": "ok", "service": "PetCare API v1",
+            "release": release_file.read_text().strip() if release_file.exists() else "development"}
 
 
 @app.get("/swagger", include_in_schema=False)

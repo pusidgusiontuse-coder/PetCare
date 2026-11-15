@@ -1,0 +1,89 @@
+name: PetCare CI/CD
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    name: Tests (Python 3.12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SECRET_KEY: ci-only-key-at-least-32-characters-do-not-use-in-production
+      DATABASE_URL: sqlite:////tmp/petcare-ci.db
+      ENABLE_DEMO_LOGIN: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+      - run: python -m pip install -r app/requirements.txt
+      - run: python -m pip check
+      - run: python -m compileall -q app scripts
+      - run: bash -n scripts/deploy.sh scripts/ship.sh
+      - run: python -m unittest discover -s scripts -p 'test_*.py' -v
+      - run: python -m pytest app/test_security_features.py app/test_main.py -q --junitxml=reports/pytest.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: reports/
+          if-no-files-found: ignore
+  build:
+    name: Build release
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/fetch_ocr_assets.py
+      - run: python scripts/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+  deploy:
+    name: Deploy production
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.SITE_URL }}
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+      PUBLIC_DIR: ${{ vars.PUBLIC_DIR }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      HOST_PYTHON: ${{ vars.HOST_PYTHON || '/opt/python/python-3.12/bin/python' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: dist
+      - run: bash scripts/ship.sh
