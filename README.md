@@ -83,9 +83,6 @@ SMTP: SSL на порту 465 либо STARTTLS на 587 с проверкой �
 
 **Оплата не подключена**: выдача доступа ручная, списания и подписки не создаются.
 
-## GitHub CI/CD
+## Проверки изменений
 
-Проверки PR, сборка релиза и деплой на REG.RU/ispmanager описаны в
-[docs/CI_CD.md](docs/CI_CD.md). Workflow: `.github/workflows/pipeline.yml`.
-Деплой включается repository variable `DEPLOY_ENABLED=true` после подключения
-SSH и подготовки сервера. До этого выполняются проверки и сборка.
+Порядок локальной проверки перед push и настройки обязательных проверок GitHub описан в [docs/CI_CD.md](docs/CI_CD.md).
