@@ -1,0 +1,42 @@
+name: Enable PR auto-merge
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions: {}
+concurrency:
+  group: enable-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  enable:
+    # Forks and drafts require an explicit maintainer decision.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Metadata only: never check out or execute pull-request code with this token.
+      - name: Enable auto-merge for the exact PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json, os, subprocess
+          from pathlib import Path
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          repo = os.environ["GITHUB_REPOSITORY"]
+          number = str(int(event["pull_request"]["number"]))
+          current = json.loads(subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/pulls/{number}"], text=True))
+          if (current["state"] != "open" or current["draft"]
+              or current["base"]["ref"] != "main"
+              or (current["head"].get("repo") or {}).get("full_name") != repo):
+              print("Not an eligible same-repository pull request.")
+          elif current.get("auto_merge"):
+              print("Auto-merge is already enabled.")
+          else:
+              subprocess.run(
+                  ["gh", "pr", "merge", number, "--repo", repo, "--auto", "--squash",
+                   "--match-head-commit", current["head"]["sha"]], check=True)
