@@ -35,7 +35,7 @@ chmod +x .git/hooks/pre-push
 
 ## Общая ветка
 
-Работайте в отдельных ветках и открывайте pull request в `main`. Владелец репозитория должен включить защиту `main` в Settings → Rules → Rulesets: требовать pull request, прохождение `Tests (Python 3.12)` и при необходимости одобрение другого участника; ограничить прямой push и обход правила. Доступность настроек для приватного репозитория зависит от тарифа GitHub. До включения защиты проверка автоматически запускается, но GitHub не запрещает слияние при её ошибке. Подробнее: [защищённые ветки GitHub](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+Работайте в отдельных ветках и открывайте pull request в `main`. Для `main` включено правило защиты с обязательной проверкой `Tests (Python 3.12)`, актуальностью ветки и запретом административного обхода. Ручное одобрение не требуется. Настройка действует на публичном репозитории. Подробнее: [защищённые ветки GitHub](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
 
 Автоматическая публикация на хостинг в этом workflow не настроена. Dependabot предлагает обновления Python-зависимостей и GitHub Actions отдельными pull request.
 
