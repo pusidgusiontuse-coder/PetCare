@@ -279,7 +279,7 @@ b,strong {
   gap:5px;
 }
 
-.nav button,.secondary-nav {
+.nav :is(button, a),.secondary-nav {
   border:0;
   background:transparent;
   display:flex;
@@ -293,17 +293,17 @@ b,strong {
   font-size:14px;
 }
 
-.nav button:hover,.secondary-nav:hover {
+.nav :is(button, a):hover,.secondary-nav:hover {
   background:#f4f6f2;
 }
 
-.nav button.active {
+.nav :is(button, a).active {
   background:var(--soft);
   color:var(--accent-dark);
   font-weight:700;
 }
 
-.nav button.active svg {
+.nav :is(button, a).active svg {
   color:var(--accent);
 }
 
@@ -2050,7 +2050,7 @@ body {
   background:var(--soft);
 }
 
-.nav button {
+.nav :is(button, a) {
   position:relative;
   border-radius:14px;
   gap:12px;
@@ -2060,22 +2060,22 @@ body {
   transition:background-color .18s,color .18s,box-shadow .18s;
 }
 
-.nav button.active {
+.nav :is(button, a).active {
   background:var(--accent-dark);
   color:#fffefa;
   box-shadow:none;
   font-weight:650;
 }
 
-.nav button.active svg {
+.nav :is(button, a).active svg {
   color:inherit;
 }
 
-.sidebar .nav button:hover:not(:disabled) {
+.sidebar .nav :is(button, a):hover:not(:disabled) {
   background:#dce7d6;
 }
 
-.sidebar .nav button.active:hover:not(:disabled) {
+.sidebar .nav :is(button, a).active:hover:not(:disabled) {
   background:var(--accent-dark);
 }
 
@@ -3304,7 +3304,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
     overflow:hidden;
   }
 
-  .sidebar .nav button {
+  .sidebar .nav :is(button, a) {
     position:relative;
     width:100%;
     min-width:0;
@@ -3323,13 +3323,13 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
     white-space:nowrap;
   }
 
-  .sidebar .nav button.active {
+  .sidebar .nav :is(button, a).active {
     background:var(--accent-dark);
     color:#fffefa;
     box-shadow:0 2px 8px #203c3224;
   }
 
-  .sidebar .nav button>svg {
+  .sidebar .nav :is(button, a)>svg {
     width:20px;
     height:20px;
     flex-shrink:0;
@@ -3431,7 +3431,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   line-height:1;
 }
 
-.nav button.active .nav-badge {
+.nav :is(button, a).active .nav-badge {
   background:#fffefa;
   color:var(--accent-dark);
 }
@@ -4606,3 +4606,14 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
 
   ;
 }
+
+/* Review improvements: keep native links and disclosure controls accessible. */
+.nav a { text-decoration:none; color:inherit; }
+.nav a[aria-disabled="true"] { opacity:.45; cursor:not-allowed; }
+.pet-card-footer { width:100%; border:0; background:transparent; text-align:left; cursor:pointer; color:inherit; font:inherit; }
+.pet-card-body { min-width:0; overflow-wrap:anywhere; }
+.pet-card-status { align-items:flex-start; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid var(--accent, #6450a5); outline-offset:4px; }
+[hidden] { display:none !important; }
+#care-events { scroll-margin-top:90px; }
+#document-list time { display:block; font-weight:600; margin:6px 0; }

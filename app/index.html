@@ -39,12 +39,12 @@
       <div class="pet-account-panel" id="pet-account-panel" role="region" aria-label="Переключение аккаунтов питомцев" hidden><p class="account-panel-title">Ваши питомцы</p><div id="pet-account-list"></div><button class="account-add" id="account-add" type="button">+ Добавить питомца</button></div>
     </div>
     <nav class="nav" aria-label="Разделы кабинета">
-      <button data-page="pets" class="mobile-pets" type="button"><svg aria-hidden="true"><use href="#paw"/></svg><span class="nav-label">Питомцы</span></button>
-      <button data-page="health" type="button"><svg aria-hidden="true"><use href="#heart"/></svg><span class="nav-label">Здоровье</span></button>
-      <button data-page="nutrition" type="button"><svg aria-hidden="true"><use href="#food"/></svg><span class="nav-label">Питание</span></button>
-      <button data-page="care" type="button"><svg aria-hidden="true"><use href="#clock"/></svg><span class="nav-label" data-mobile="Уход">Уход и события</span></button>
-      <button data-page="documents" type="button"><svg aria-hidden="true"><use href="#folder"/></svg><span class="nav-label">Документы</span></button>
-      <button data-page="match" type="button"><svg aria-hidden="true"><use href="#spark"/></svg><span class="nav-label" data-mobile="Друзья">Поиск друзей</span><span id="match-nav-badge" class="nav-badge" hidden>0</span></button>
+      <a href="#pets" data-page="pets" class="mobile-pets" aria-label="Питомцы"><svg aria-hidden="true"><use href="#paw"/></svg><span class="nav-label">Питомцы</span></a>
+      <a href="#health" data-page="health" aria-label="Здоровье"><svg aria-hidden="true"><use href="#heart"/></svg><span class="nav-label">Здоровье</span></a>
+      <a href="#nutrition" data-page="nutrition" aria-label="Питание"><svg aria-hidden="true"><use href="#food"/></svg><span class="nav-label">Питание</span></a>
+      <a href="#care" data-page="care" aria-label="Уход и события"><svg aria-hidden="true"><use href="#clock"/></svg><span class="nav-label" data-mobile="Уход">Уход и события</span></a>
+      <a href="#documents" data-page="documents" aria-label="Документы"><svg aria-hidden="true"><use href="#folder"/></svg><span class="nav-label">Документы</span></a>
+      <a href="#match" data-page="match" aria-label="Поиск друзей"><svg aria-hidden="true"><use href="#spark"/></svg><span class="nav-label" data-mobile="Друзья">Поиск друзей</span><span id="match-nav-badge" class="nav-badge" hidden>0</span></a>
     </nav>
     <div class="sidebar-bottom">
       <button id="profile-paw" class="owner-button" aria-label="Профиль и настройки" title="Профиль и настройки" type="button"><span class="initial" id="owner-initial">И</span><span><b id="owner-name">Илья</b><small id="owner-email">Профиль и настройки</small></span><span aria-hidden="true">↗</span></button>
@@ -74,6 +74,7 @@
         </div>
       </div>
       <div id="pet-cards" class="pet-grid"></div>
+      <section id="today-panel" class="panel glass" aria-labelledby="today-heading" hidden><h2 id="today-heading">Сегодня</h2><div id="today-overview"></div></section>
       <div class="directory-note">
         <svg aria-hidden="true"><use href="#heart"/></svg>
         <div>
@@ -93,7 +94,7 @@
         </div>
         <button class="btn primary" data-modal="health" type="button">+ Запись</button>
       </div>
-      <details class="pet-profile-panel" id="health-pet-profile" open>
+      <details class="pet-profile-panel" id="health-pet-profile">
         <summary>
           <span class="profile-pet-avatar" id="health-profile-avatar" aria-hidden="true"></span>
           <span class="profile-pet-heading">
@@ -101,7 +102,7 @@
             <strong id="health-profile-name"></strong>
             <small id="health-profile-meta"></small>
           </span>
-          <span class="profile-disclosure-arrow" aria-hidden="true"></span>
+          <span class="small">Изменить</span><span class="profile-disclosure-arrow" aria-hidden="true"></span>
         </summary>
         <form id="health-pet-form" aria-label="Карточка питомца">
           <div class="form-grid pet-profile-fields" id="health-profile-fields"></div>
@@ -176,7 +177,7 @@
         </div>
       </div>
 
-      <details class="secondary-details food-tools" open>
+      <details class="secondary-details food-tools">
         <summary>Подбор и сравнение кормов</summary>
         <div class="food-tools-content">
           <div class="panel glass">
@@ -234,7 +235,7 @@
         </div>
       </div>
 
-      <details class="secondary-details" open>
+      <details class="secondary-details">
         <summary>История ухода и покупки</summary>
         <div class="grid2">
           <div class="panel glass">
@@ -252,6 +253,7 @@
         </div>
       </details>
 
+      <details class="secondary-details"><summary>Клиника и дневник ухода</summary>
       <div class="panel glass" id="clinic-panel">
         <div class="panel-head">
           <h2>Клиника и лечащий врач</h2>
@@ -267,6 +269,7 @@
         </div>
         <div id="care-activity" class="activity"></div>
       </div>
+      </details>
     </section>
 
     <!-- SECTION: DOCUMENTS -->
@@ -284,6 +287,7 @@
           <h2>Файлы питомца</h2>
           <div class="chips" id="document-filters"></div>
         </div>
+        <label class="field">Поиск документов<input type="search" id="document-search" placeholder="Название, категория или дата"></label>
         <div id="document-list" class="record-list"></div>
       </div>
 
@@ -1252,10 +1256,11 @@ const reminderStatus = e => {
 
 function render() {
   const current = pet();
-  document.querySelectorAll('.nav [data-page]').forEach(button => { button.disabled = !current && button.dataset.page !== 'pets'; });
+  document.querySelectorAll('.nav [data-page]').forEach(button => { button.href = routeHash(button.dataset.page); button.setAttribute('aria-disabled', String(!current && button.dataset.page !== 'pets')); });
   $('pet-account-button').disabled = !current;
 
   if (!current) {
+    $('today-panel').hidden = true;
     if (!['pets', 'profile'].includes(page)) page = 'pets';
     document.querySelectorAll('.section').forEach(section => section.classList.toggle('active', section.id === page));
     $('pet-cards').innerHTML = '<p class="empty">Пока нет питомцев. Нажмите «+ Добавить питомца», чтобы создать карточку или подключиться по коду совместного ухода.</p>';
@@ -1280,16 +1285,23 @@ function render() {
 
 function renderPetDirectory() {
   const pending = id => state.events.filter(e => String(e.petId) === String(id) && e.status === 'pending').sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
+  const selected = pet();
+  $('today-panel').hidden = false;
+  const todayEvents = pending(selected.id).filter(e => mskDay(mskMoment(e.at)) === mskDay());
+  const meals = dailyMealsForPet(selected.id);
+  $('today-overview').innerHTML = '<p>' + esc(selected.name) + ' · расписание по Москве</p>' +
+    (todayEvents.length ? todayEvents.slice(0, 3).map(e => '<p><a class="doc-link" href="' + esc(routeHash('care')) + '">' + esc(e.title) + ' · ' + esc(mskLabel(e.at)) + '</a></p>').join('') : '<p class="small">На сегодня процедур нет.</p>') +
+    (meals.length ? '<a class="doc-link" href="' + esc(routeHash('nutrition')) + '">Кормления на сегодня: ' + meals.length + ' · открыть расписание</a>' : '');
   $('pet-cards').innerHTML = state.pets.map((p, index) => {
-    const events = pending(p.id), overdue = events.some(e => reminderStatus(e) === 'overdue');
-    const status = overdue ? 'Есть просроченное событие' : events.length ? 'Ближайшее: ' + mskLabel(events[0].at) : (p.isShared ? 'Совместный уход активен' : 'Нет запланированных событий');
+    const events = pending(p.id), overdueEvents = events.filter(e => reminderStatus(e) === 'overdue'), overdue = overdueEvents.length > 0;
+    const status = overdue ? 'Просрочено: ' + overdueEvents[0].title + ' · ' + mskLabel(overdueEvents[0].at) + (overdueEvents.length > 1 ? ' · всего ' + overdueEvents.length : '') : events.length ? 'Ближайшее: ' + mskLabel(events[0].at) : (p.isShared ? 'Совместный уход активен' : 'Нет запланированных событий');
     const art = petAvatar(p);
     const shareHtml = p.shareCode
-      ? '<span class="pet-card-code" data-copy-code="' + esc(p.shareCode) + '" title="Скопировать код для совместного ухода">' +
+      ? '<button type="button" class="pet-card-code" data-copy-code="' + esc(p.shareCode) + '" title="Скопировать код для совместного ухода">' +
           '<span>Код:</span><code>' + esc(p.shareCode) + '</code><span class="copy-label">копировать</span>' +
-        '</span>'
+        '</button>'
       : '';
-    return '<div class="pet-card" role="button" tabindex="0" data-open-pet="' + esc(p.id) + '" aria-label="Карточка питомца: ' + esc(p.name) + '">' +
+    return '<div class="pet-card">' +
       '<span class="pet-card-visual">' +
         '<span class="pet-number">ПИТОМЕЦ ' + String(index + 1).padStart(2, '0') + (p.isShared ? ' · СОВМЕСТНЫЙ' : '') + '</span>' +
         '<span class="pet-visual-mark" aria-hidden="true"><svg><use href="#heart"/></svg></span>' +
@@ -1300,10 +1312,13 @@ function renderPetDirectory() {
         '<span class="pet-card-meta">' + esc(p.species) + ' · ' + esc(p.breed || 'Метис') + ' · ' + esc(petProfileAge(p.birthDate)) + '</span>' +
         shareHtml +
         '<span class="pet-card-status"><span class="status-dot ' + (overdue ? 'warning' : '') + '"></span>' + esc(status) + '</span>' +
-        '<span class="pet-card-footer"><span>Открыть карточку</span><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg></span></span>' +
+        (overdue ? '<button type="button" class="btn tiny" data-overdue-pet="' + esc(p.id) + '">' + (overdueEvents.length > 1 ? 'Посмотреть просроченные' : 'Посмотреть событие') + '</button>' : '') +
+        '<button type="button" class="pet-card-footer" data-open-pet="' + esc(p.id) + '" aria-label="Открыть карточку: ' + esc(p.name) + '"><span>Открыть карточку</span><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg></span></button>' +
       '</span>' +
     '</div>';
   }).join('');
+
+  $('pet-cards').querySelectorAll('[data-overdue-pet]').forEach(button => { button.onclick = () => { if (!setPetContext(button.dataset.overduePet)) return; careFilter = 'overdue'; show('care'); $('care-events').scrollIntoView({block: 'start'}); $('care-filters').querySelector('[data-care-filter=overdue]').focus(); }; });
 
   $('pet-cards').querySelectorAll('[data-copy-code]').forEach(badge => {
     badge.onclick = e => {
@@ -1318,12 +1333,7 @@ function renderPetDirectory() {
       render();
       openModal('pet-details');
     };
-    card.onkeydown = e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        card.click();
-      }
-    };
+
   });
 }
 
@@ -1346,7 +1356,7 @@ function renderHealth() {
   document.querySelectorAll('[data-health-filter]').forEach(b => b.onclick = () => { healthFilter = b.dataset.healthFilter; renderHealth(); });
 
   const rows = state.health.filter(x => isForPet(x, p) && (healthFilter === 'all' || x.type === healthFilter)).sort((a, b) => b.date.localeCompare(a.date));
-  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || 'Запись') + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && 'Клиника: ' + x.clinic, x.doctor && 'Врач: ' + x.doctor, x.result && 'Результат: ' + x.result, x.notes, x.nextDate && 'Следующая процедура: ' + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + '">Скачать вложение: ' + esc(x.attachment.name) + '</a>' : '') + '<button class="btn tiny ghost danger" type="button" data-del-health="' + esc(x.id) + '">Удалить</button></article>').join('') : '<p class="empty">Записей пока нет.</p>';
+  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record" data-health-record="' + esc(x.id) + '"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || 'Запись') + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && 'Клиника: ' + x.clinic, x.doctor && 'Врач: ' + x.doctor, x.result && 'Результат: ' + x.result, x.notes, x.nextDate && 'Следующая процедура: ' + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + '">Скачать вложение: ' + esc(x.attachment.name) + '</a>' : '') + '<button class="btn tiny ghost danger" type="button" data-del-health="' + esc(x.id) + '">Удалить</button></article>').join('') : '<p class="empty">Записей пока нет.</p>';
 
   $('health-records').querySelectorAll('[data-del-health]').forEach(btn => {
     btn.onclick = async () => {
@@ -1534,10 +1544,17 @@ function renderNutrition() {
     $('compare-a').value = groups[a] ? a : '0';
     $('compare-b').value = groups[b] ? b : String(Math.min(1, groups.length - 1));
   }
-  const compare = () => {
-    if (!groups.length) {
-      $('comparison').innerHTML = '<p class="empty">Добавьте хотя бы один корм для сравнения.</p>';
+  const compare = (event) => {
+    if (groups.length < 2) {
+      $('compare-a').closest('.compare-selects-row').hidden = true;
+      $('comparison').innerHTML = '<p class="empty">Добавьте ещё ' + (groups.length ? 'один корм' : 'два корма') + ' для сравнения.</p><button type="button" class="btn tiny" id="add-comparison-food">Добавить корм</button>';
+      $('add-comparison-food').onclick = () => openModal('nutrition');
       return;
+    }
+    $('compare-a').closest('.compare-selects-row').hidden = false;
+    if ($('compare-a').value === $('compare-b').value) {
+      const other = event?.target?.id === 'compare-b' ? $('compare-a') : $('compare-b');
+      other.value = String(groups.findIndex((_, i) => String(i) !== (other.id === 'compare-a' ? $('compare-b').value : $('compare-a').value)));
     }
     const summary = g => {
       const latest = g.at(-1);
@@ -1673,7 +1690,7 @@ function renderCare() {
   document.querySelectorAll('[data-care-filter]').forEach(b => b.onclick = () => { careFilter = b.dataset.careFilter; renderCare(); });
 
   const active = state.events.filter(e => isForPet(e, p) && e.status === 'pending' && (careFilter === 'all' || reminderStatus(e) === careFilter || (careFilter === 'week' && ['today', 'tomorrow', 'week'].includes(reminderStatus(e))))).sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
-  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.type || 'Процедура') + (e.intervalDays ? ' · каждые ' + esc(e.intervalDays) + ' дн.' : '') + (e.intervalMonths ? ' · каждые ' + esc(e.intervalMonths) + ' мес.' : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="complete">Готово</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="skip">Пропустить</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="move">Перенести</button></div></div>').join('') || '<p class="empty">Событий за выбранный период нет.</p>';
+  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.type || 'Процедура') + (e.intervalDays ? ' · каждые ' + esc(e.intervalDays) + ' дн.' : '') + (e.intervalMonths ? ' · каждые ' + esc(e.intervalMonths) + ' мес.' : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="complete" aria-label="Готово — отметить выполненным: ' + esc(e.title) + '">Готово</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="skip" aria-label="Пропустить: ' + esc(e.title) + '">Пропустить</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="move" aria-label="Перенести: ' + esc(e.title) + '">Перенести</button></div></div>').join('') || '<p class="empty">Событий за выбранный период нет.</p>';
   document.querySelectorAll('[data-care-event]').forEach(b => b.onclick = () => eventAction(b.dataset.careEvent, b.dataset.do));
 
   const history = state.events.filter(e => isForPet(e, p) && e.status !== 'pending').sort((a, b) => mskMoment(b.completedAt || b.at) - mskMoment(a.completedAt || a.at)), expanded = expandedHistoryPet === p.id;
@@ -1720,7 +1737,7 @@ function clinicHttpLink(value) {
 function renderShoppingList() {
   const p = pet();
   const items = state.shopping.filter(item => isForPet(item, p));
-  $('shopping-list').innerHTML = items.map(item => '<div class="shopping-item' + (item.done ? ' is-bought' : '') + '"><span class="shopping-item-name">' + esc(shoppingItemText(item)) + (item.done && item.by ? ' <small style="color:var(--muted);font-weight:400">(' + esc(item.by) + ')</small>' : '') + '</span><button class="btn tiny shopping-bought" type="button" data-shopping="' + esc(item.id) + '" aria-pressed="' + Boolean(item.done) + '">' + (item.done ? '<span aria-hidden="true">✓</span> ' : '') + 'Куплено</button></div>').join('') || '<p class="empty">Список покупок пуст.</p>';
+  $('shopping-list').innerHTML = items.map(item => '<div class="shopping-item' + (item.done ? ' is-bought' : '') + '"><span class="shopping-item-name">' + esc(shoppingItemText(item)) + (item.done && item.by ? ' <small style="color:var(--muted);font-weight:400">(' + esc(item.by) + ')</small>' : '') + '</span><button class="btn tiny shopping-bought" type="button" aria-label="Куплено: ' + esc(shoppingItemText(item)) + '" data-shopping="' + esc(item.id) + '" aria-pressed="' + Boolean(item.done) + '">' + (item.done ? '<span aria-hidden="true">✓</span> ' : '') + 'Куплено</button></div>').join('') || '<p class="empty">Список покупок пуст.</p>';
 
   $('shopping-list').querySelectorAll('[data-shopping]').forEach(button => button.onclick = () => {
     const item = state.shopping.find(row => row.id === button.dataset.shopping);
@@ -1741,6 +1758,7 @@ function renderClinicContact() {
 }
 
 // DOCUMENTS SECTION
+$('document-search').oninput = () => renderDocuments();
 function renderDocuments() {
   const p = pet();
   if (!p) return;
@@ -1752,8 +1770,11 @@ function renderDocuments() {
   const standalone = state.documents.filter(d => isForPet(d, p) && (documentFilter === 'all' || d.type === documentFilter));
   const fromHealth = state.health.filter(h => isForPet(h, p) && h.attachment && (documentFilter === 'all' || documentFilter === 'conclusion')).map(h => ({ id: h.id, title: h.title, type: 'conclusion', date: h.date, file: h.attachment, linked: true }));
 
-  $('document-list').innerHTML = [...standalone, ...fromHealth].sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: 'Паспорт', conclusion: 'Заключение', prescription: 'Назначение', other: 'Другое' })[d.type] || 'Документ') + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + '">Открыть · ' + esc(d.file.name || 'файл') + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '' : '<button class="btn tiny danger" type="button" data-remove-doc="' + esc(d.id) + '">Удалить</button>') + '</div>').join('') || '<p class="empty">Документов пока нет. Добавьте паспорт, фото или воспользуйтесь ИИ-распознаванием ниже.</p>';
+  const search = $('document-search').value.trim().toLocaleLowerCase('ru');
+  const matches = d => [d.title, d.file?.name, d.date, date(d.date), ({passport:'Паспорт',conclusion:'Заключение',prescription:'Назначение',other:'Другое'})[d.type]].join(' ').toLocaleLowerCase('ru').includes(search);
+  $('document-list').innerHTML = [...standalone, ...fromHealth].filter(matches).sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: 'Паспорт', conclusion: 'Заключение', prescription: 'Назначение', other: 'Другое' })[d.type] || 'Документ') + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + '">Открыть · ' + esc(d.file.name || 'файл') + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '<button class="btn tiny" type="button" data-linked-health="' + esc(d.id) + '">Открыть медицинскую запись</button>' : '<button class="btn tiny danger" type="button" data-remove-doc="' + esc(d.id) + '">Удалить</button>') + '</div>').join('') || '<p class="empty">Документов не найдено. Измените поиск или категорию, либо добавьте документ.</p>';
 
+  document.querySelectorAll('[data-linked-health]').forEach(b => b.onclick = () => { healthFilter = 'all'; show('health'); const record = [...$('health-records').children].find(el => el.dataset.healthRecord === b.dataset.linkedHealth); if (record) { record.tabIndex = -1; record.scrollIntoView({block:'center'}); record.focus(); } });
   document.querySelectorAll('[data-remove-doc]').forEach(b => b.onclick = async () => {
     const removed=state.documents.find(x=>x.id===b.dataset.removeDoc); if(!removed?.serverId)return;
     try {const result=await apiFetch('/documents/'+removed.serverId,{method:'DELETE'});lastChange={kind:'document',token:result.undo_token,at:Date.now()};await syncServerData(true);render();notify('Документ удалён. Можно отменить в профиле в течение 5 минут.');}catch(err){notify(err.message);}
@@ -1999,7 +2020,7 @@ function renderMatch() {
     $('match-deck-container').innerHTML =
       '<div class="panel glass" style="text-align:center;padding:36px 24px">' +
         '<h2>Все доступные анкеты просмотрены</h2>' +
-        '<p class="small" style="max-width:460px;margin:8px auto 18px">Вы можете посмотреть пропущенные анкеты заново для питомца <b>' + esc(p.name) + '</b> или перейти в раздел «Вас лайкнули».</p>' +
+        '<p class="small" style="max-width:460px;margin:8px auto 18px">Новые анкеты появятся, когда другие владельцы опубликуют подходящие профили. Проверьте видимость и настройки своей анкеты. Вы можете посмотреть пропущенные анкеты заново для питомца <b>' + esc(p.name) + '</b> или перейти в раздел «Вас лайкнули».</p>' +
         '<div class="row" style="justify-content:center">' +
           '<button type="button" class="btn primary" id="btn-reset-match-skips">Смотреть анкеты заново</button>' +
           '<button type="button" class="btn" id="btn-goto-incoming">Вас лайкнули (' + (m.incomingLikes || []).length + ')</button>' +
@@ -2301,6 +2322,7 @@ function renderDetails() {
 }
 
 function openModal(type, id) {
+  editorDirty = false;
   clearEditorError();
   closePetAccounts();
   modalType = type;
@@ -2435,6 +2457,7 @@ function openModal(type, id) {
 }
 
 function openExtraModal(type) {
+  editorDirty = false;
   clearEditorError();
   closePetAccounts();
   const p = pet();
@@ -2505,7 +2528,7 @@ function openExtraModal(type) {
       field('doctor', 'Имя врача', 'text', { full: true });
   } else if (type === 'profile') {
     title = 'Настройки аккаунта';
-    html = field('name', 'Имя', 'text', { required: true }) + field('email', 'Электронная почта (смена через подтверждение ниже)', 'email', { required: true });
+    html = field('name', 'Имя', 'text', { required: true }) + field('email', 'Электронная почта (смена через подтверждение ниже)', 'email', { required: true }) + field('timezone', 'Часовой пояс', 'select', { options: [...new Set([state.user.timezone || 'Europe/Moscow', ...(Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : ['Europe/Moscow','UTC','Europe/Kaliningrad','Asia/Yekaterinburg','Asia/Novosibirsk','Asia/Vladivostok'])])].map(zone => [zone, zone]) });
   } else if (type === 'member') {
     title = 'Участник ухода';
     html = field('email', 'Почта зарегистрированного участника', 'email', { required: true }) + field('role', 'Роль', 'select', { options: [['editor', 'Редактор'], ['viewer', 'Просмотр']] }) + field('until', 'Доступ до', 'date');
@@ -2532,6 +2555,23 @@ function openExtraModal(type) {
   const petSelect = form.elements.namedItem('petId');
   if (petSelect && p) petSelect.value = p.id;
   if (['reminder', 'feeding-log'].includes(type)) form.elements.namedItem('at').value = mskNow();
+  if (type === 'reminder') {
+    const frequency = form.elements.namedItem('frequency'), interval = form.elements.namedItem('interval');
+    const updateInterval = () => {
+      const repeated = frequency.value !== 'once';
+      interval.closest('.field').hidden = !repeated; interval.disabled = !repeated; interval.required = repeated;
+      interval.closest('.field').firstChild.textContent = frequency.value === 'months' ? 'Повторять каждые N месяцев' : 'Повторять каждые N дней';
+      if (repeated && !interval.value) interval.value = '1';
+    };
+    frequency.onchange = updateInterval; updateInterval();
+    const at = form.elements.namedItem('at'), hint = document.createElement('p');
+    hint.className = 'hint full'; hint.setAttribute('role', 'status'); at.closest('.field').after(hint);
+    const updateZoneHint = () => {
+      const moment = mskMoment(at.value);
+      hint.textContent = Number.isNaN(moment.getTime()) ? 'Введите дату и время по Москве.' : 'В вашем часовом поясе (' + (state.user.timezone || 'Europe/Moscow') + '): ' + new Intl.DateTimeFormat('ru-RU', {timeZone:state.user.timezone || 'Europe/Moscow', dateStyle:'medium', timeStyle:'short'}).format(moment);
+    };
+    at.addEventListener('input', updateZoneHint); at.addEventListener('change', updateZoneHint); updateZoneHint();
+  }
   if (type === 'document') form.elements.namedItem('date').value = mskDay();
   if (type === 'vet-contact' && p) {
     const c = state.contacts[p.id] || {};
@@ -2539,6 +2579,7 @@ function openExtraModal(type) {
     if (form.elements.namedItem('doctor')) form.elements.namedItem('doctor').value = c.doctor || '';
   }
   if (type === 'profile') {
+    form.elements.namedItem('timezone').value = state.user.timezone || 'Europe/Moscow';
     form.elements.namedItem('name').value = state.user.name || '';
     form.elements.namedItem('email').value = state.user.email || '';
   }
@@ -2883,8 +2924,8 @@ $('editor-form').onsubmit = async event => {
       }
     } else if (modalType === 'extra-profile') {
       if(data.email.trim().toLowerCase() !== state.user.email) throw Error('Для смены почты используйте кнопку «Изменить почту» в безопасности аккаунта.');
-      await apiFetch('/auth/user',{method:'PUT',body:JSON.stringify({full_name:data.name})});
-      state.user.name=data.name;
+      await apiFetch('/auth/user',{method:'PUT',body:JSON.stringify({full_name:data.name,timezone:data.timezone})});
+      state.user.name=data.name; state.user.timezone=data.timezone;
       updateAuthStatusUI();
     } else if (modalType === 'extra-member') {
       await apiFetch('/pets/'+p.serverId+'/members',{method:'POST',body:JSON.stringify({email:data.email,role:data.role,expires_at:data.until?data.until+'T23:59:59+03:00':null})});
@@ -3290,15 +3331,21 @@ setInterval(() => {
 // =====================================================================
 setupPetAccountSwitcher();
 document.querySelectorAll('[data-route]').forEach(b => b.onclick = () => show(b.dataset.route));
-document.querySelectorAll('.nav [data-page]').forEach(b => b.onclick = () => show(b.dataset.page));
+document.querySelectorAll('.nav [data-page]').forEach(b => b.onclick = e => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return; e.preventDefault(); if (b.getAttribute('aria-disabled') !== 'true') show(b.dataset.page); });
 document.querySelectorAll('[data-modal]').forEach(b => b.onclick = () => openModal(b.dataset.modal));
 document.querySelectorAll('[data-extra-modal]').forEach(b => b.onclick = () => openExtraModal(b.dataset.extraModal));
 $('profile-paw').onclick = () => show('profile');
-$('cancel-editor').onclick = () => $('editor').close();
-$('close-editor').onclick = () => $('editor').close();
+let editorDirty = false;
+$('editor-form').addEventListener('input', () => { editorDirty = true; });
+$('editor-form').addEventListener('change', () => { editorDirty = true; });
+const mayCloseEditor = () => !editorDirty || confirm('Закрыть форму без сохранения изменений?');
+$('editor').addEventListener('cancel', e => { if (!mayCloseEditor()) e.preventDefault(); });
+$('editor').addEventListener('close', () => { editorDirty = false; });
+$('cancel-editor').onclick = $('close-editor').onclick = () => { if (mayCloseEditor()) $('editor').close(); };
+window.addEventListener('beforeunload', e => { if (editorDirty && $('editor').open) { e.preventDefault(); e.returnValue = ''; } });
 
 document.querySelectorAll('dialog').forEach(d => {
-  d.addEventListener('click', e => { if (e.target === d) d.close(); });
+  d.addEventListener('click', e => { if (e.target === d && (d.id !== 'editor' || mayCloseEditor())) d.close(); });
 });
 
 // =====================================================================
