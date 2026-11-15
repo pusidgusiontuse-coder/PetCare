@@ -157,7 +157,7 @@
           <h1>Питание</h1>
           <span class="subtle" id="nutrition-pet-name"></span>
         </div>
-        <button class="btn primary" data-extra-modal="meal-plan" type="button">+ Добавить питание</button>
+        <div class="row nutrition-actions"><button class="btn" data-extra-modal="meal-plan" type="button">Настроить кормления</button><button class="btn primary" data-modal="nutrition" id="nutrition-add-food" type="button">+ Добавить корм</button></div>
       </div>
       <div class="grid2">
         <div class="panel glass">
@@ -184,7 +184,7 @@
             <div class="panel-head">
               <h2>Журнал кормов и реакций</h2>
               <div class="row">
-                <button class="btn tiny" data-modal="nutrition" type="button">+ Корм и реакция</button>
+                <button class="btn tiny" data-modal="nutrition" type="button">+ Добавить корм</button>
                 <select id="food-filter" aria-label="Тип питания">
                   <option value="all">Все записи</option>
                   <option value="food">Основной корм</option>
@@ -1526,7 +1526,15 @@ function renderNutrition() {
   const all = state.nutrition.filter(n => isForPet(n, p)), filter = $('food-filter').value;
   $('nutrition-pet-name').textContent = p.name;
   const rows = all.filter(n => filter === 'all' || n.kind === filter).sort((a, b) => b.date.localeCompare(a.date));
-  $('food-journal').innerHTML = rows.length ? rows.map(n => '<article class="nutri-card"><div class="row space"><b>' + esc(n.food) + '</b><span class="small">' + esc(date(n.date)) + '</span></div><p>' + esc([n.brand, kindLabel[n.kind], n.price && money(n.price)].filter(Boolean).join(' · ')) + '</p><div class="rating"><span class="' + (n.liked === 'no' ? 'no' : n.liked === 'unknown' ? 'unknown' : '') + '">Понравился: ' + rating(n.liked) + '</span><span class="' + (n.tolerated === 'no' ? 'no' : n.tolerated === 'unknown' ? 'unknown' : '') + '">Подошёл: ' + rating(n.tolerated) + '</span></div>' + (n.reactions?.length ? '<p>Реакции: ' + esc(n.reactions.join(', ')) + '</p>' : '') + (n.notes ? '<p>' + esc(n.notes) + '</p>' : '') + '</article>').join('') : '<p class="empty">Записей пока нет. Добавьте корм, лакомство или добавку.</p>';
+  $('food-journal').innerHTML = rows.length ? rows.map(n => {
+    const verdict = n.tolerated === 'yes' ? 'Подходит' : n.tolerated === 'no' ? 'Не подошёл' : 'Наблюдаем';
+    const tone = n.tolerated === 'yes' ? 'positive' : n.tolerated === 'no' ? 'negative' : 'neutral';
+    return `<article class="food-entry"><div class="food-entry-head"><div><span class="food-entry-kind">${esc(kindLabel[n.kind] || 'Корм')}</span><h3>${esc(n.food)}</h3>${n.brand ? `<p>${esc(n.brand)}</p>` : ''}</div><span class="food-verdict ${tone}">${verdict}</span></div>
+      <div class="food-entry-assessment"><span><span class="food-assessment-label">Аппетит</span><strong>${esc(n.liked === 'yes' ? 'Ест охотно' : n.liked === 'no' ? 'Не понравился' : 'Пока не оценён')}</strong></span><span><span class="food-assessment-label">Переносимость</span><strong>${esc(n.tolerated === 'yes' ? 'Без замечаний' : n.tolerated === 'no' ? 'Есть замечания' : 'Наблюдаем')}</strong></span></div>
+      ${n.reactions?.length ? `<div class="food-entry-reaction"><strong>Наблюдения</strong><p>${esc(n.reactions.join(', '))}</p></div>` : ''}
+      ${n.notes ? `<p class="food-entry-note">${esc(n.notes)}</p>` : ''}<footer><time>${esc(date(n.date))}</time>${n.price ? `<span>${esc(money(n.price))} за упаковку</span>` : ''}</footer></article>`;
+  }).join('') : '<div class="food-journal-empty"><h3>У каждого питомца свой вкус</h3><p>Добавьте первый корм, чтобы сохранить состав рациона и наблюдения за реакцией.</p><button type="button" class="btn primary" id="food-journal-add">Добавить корм</button></div>';
+  if ($('food-journal-add')) $('food-journal-add').onclick = () => openModal('nutrition');
 
   const groups = foodGroups(all.filter(n => n.kind === 'food'));
   for (const [id, want] of [['suitable-foods', 'yes'], ['unsuitable-foods', 'no']]) {
@@ -2322,6 +2330,8 @@ function renderDetails() {
 }
 
 function openModal(type, id) {
+  $('editor').dataset.mode = type;
+  $('editor-form').querySelector('[type=submit]').textContent = type === 'nutrition' ? 'Сохранить корм' : 'Сохранить';
   editorDirty = false;
   clearEditorError();
   closePetAccounts();
@@ -2393,16 +2403,21 @@ function openModal(type, id) {
     title = 'Новое измерение';
     html = f.date('date') + field('kg', 'Вес, кг', 'number', { required: true, min: '.1', max: '150', step: '.1' });
   } else if (type === 'nutrition') {
-    title = 'Корм и реакция';
-    html = field('food', 'Название', 'text', { required: true }) +
-      field('brand', 'Бренд') +
-      field('kind', 'Тип', 'select', { options: Object.entries(kindLabel) }) +
-      f.date('date') +
-      field('liked', 'Понравился?', 'select', { options: [['unknown', 'Неизвестно'], ['yes', 'Да'], ['no', 'Нет']] }) +
-      field('tolerated', 'Подошёл организму?', 'select', { options: [['unknown', 'Неизвестно'], ['yes', 'Да'], ['no', 'Нет']] }) +
-      field('reactions', 'Реакции', 'text', { placeholder: 'Зуд, проблемы с ЖКТ, отказ' }) +
-      field('price', 'Цена, ₽', 'number', { min: '0', step: '.01' }) +
-      f.notes();
+    title = 'Добавить корм';
+    const choice = (name, legend, options, selected = 'unknown') => `<fieldset class="food-choice"><legend>${legend}</legend><div class="food-options">${options.map(([value, text]) => `<label><input type="radio" name="${name}" value="${value}" ${value === selected ? 'checked' : ''}><span>${text}</span></label>`).join('')}</div></fieldset>`;
+    html = `<div class="food-form-intro full"><span class="food-form-icon" aria-hidden="true"><svg><use href="#food"/></svg></span><div><strong>Что пробует питомец?</strong><p>Сохраните корм и свои наблюдения. Оценку можно пока не давать.</p></div></div>
+      <section class="food-form-section full" aria-labelledby="food-product-heading"><h3 id="food-product-heading">О корме</h3><div class="form-grid">
+      ${field('food', 'Название корма *', 'text', {required:true, full:true, placeholder:'Например, индейка с рисом'})}
+      ${field('brand', 'Бренд', 'text', {full:true, placeholder:'Например, название с упаковки'})}
+      </div>${choice('kind', 'Тип питания', Object.entries(kindLabel), 'food')}</section>
+      <section class="food-form-section full" aria-labelledby="food-observation-heading"><h3 id="food-observation-heading">Как отреагировал питомец?</h3>
+      ${choice('liked', 'Ест с удовольствием?', [['yes','Да'],['no','Нет'],['unknown','Пока не знаю']])}
+      ${choice('tolerated', 'Хорошо переносит?', [['yes','Да'],['no','Нет'],['unknown','Наблюдаю']])}
+      ${field('reactions', 'Что заметили?', 'textarea', {full:true,placeholder:'Например, отказался есть или появился зуд. Можно оставить пустым.'})}
+      <p class="food-form-hint">Это ваши наблюдения, а не медицинское заключение.</p></section>
+      <details class="food-form-details full"><summary>Дата, цена и заметки <span>Необязательно</span></summary><div class="form-grid">
+      ${f.date('date')}${field('price', 'Цена упаковки, ₽', 'number', {min:'0',step:'.01',placeholder:'Не указана'})}${f.notes()}
+      </div></details>`;
   }
 
   if (type !== 'pet-details') $('editor-fields').innerHTML = html;
@@ -2457,6 +2472,8 @@ function openModal(type, id) {
 }
 
 function openExtraModal(type) {
+  $('editor').dataset.mode = type;
+  $('editor-form').querySelector('[type=submit]').textContent = 'Сохранить';
   editorDirty = false;
   clearEditorError();
   closePetAccounts();

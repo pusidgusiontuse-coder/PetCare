@@ -1,18 +1,20 @@
 """Browser regression checks. Start a demo-enabled server with an isolated DB first."""
 import os
+import uuid
 from playwright.sync_api import sync_playwright, expect
 
 BASE = os.environ.get('PETCARE_TEST_URL', 'http://127.0.0.1:8002')
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
-    for width in (1440, 390):
-        context = browser.new_context(viewport={'width': width, 'height': 900})
+    for width, height in ((1440, 900), (375, 812), (812, 375)):
+        context = browser.new_context(viewport={'width': width, 'height': height})
         response = context.request.post(BASE + '/api/v1/auth/demo-login/1')
         assert response.ok, response.text()
         token = response.json()['access_token']
         context.add_init_script('localStorage.setItem("petcare_jwt", ' + __import__('json').dumps(token) + ')')
         page = context.new_page()
+        page.emulate_media(reduced_motion='reduce')
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(BASE)
@@ -62,6 +64,34 @@ with sync_playwright() as playwright:
         assert page.locator('#compare-a').input_value() != page.locator('#compare-b').input_value()
         page.locator('#compare-b').select_option('1')
         assert page.locator('#compare-a').input_value() != page.locator('#compare-b').input_value()
+        page.locator('#nutrition-add-food').click()
+        expect(page.locator('#editor')).to_have_attribute('data-mode', 'nutrition')
+        expect(page.locator('#editor input[name=food]')).to_be_visible()
+        expect(page.locator('#editor input[name=price]')).to_be_hidden()
+        section = page.locator('.food-form-section').first.bounding_box()
+        fields = page.locator('#editor-fields').bounding_box()
+        assert section and fields and abs(section['width'] - fields['width']) < 2, 'Food sections should span form width'
+        food_name = 'Тестовый корм ' + uuid.uuid4().hex[:8]
+        page.locator('#editor [name=food]').fill(food_name)
+        page.locator('#editor [name=brand]').fill('Проверка интерфейса')
+        page.locator('.food-options label:has(input[name=liked][value=yes])').click()
+        page.locator('.food-options label:has(input[name=tolerated][value=no])').click()
+        page.locator('#editor [name=reactions]').fill('Отказался от корма')
+        page.locator('.food-form-details summary').click()
+        page.locator('#editor [name=price]').fill('1290')
+        page.locator('#editor [name=notes]').fill('Заметка для проверки')
+        page.locator('#editor').evaluate('(el) => el.scrollTop = 0')
+        page.screenshot(path=f'/tmp/petcare-food-form-{width}.png')
+        with page.expect_response(lambda r: '/nutrition' in r.url and r.request.method == 'POST') as saved:
+            page.get_by_role('button', name='Сохранить корм', exact=True).click()
+        assert saved.value.ok, saved.value.text()
+        expect(page.locator('#editor')).not_to_be_visible()
+        entry = page.locator('.food-entry').filter(has_text=food_name)
+        expect(entry).to_contain_text('Не подошёл')
+        expect(entry).to_contain_text('Ест охотно')
+        expect(entry).to_contain_text('Отказался от корма')
+        expect(entry).to_contain_text('Заметка для проверки')
+        page.screenshot(path=f'/tmp/petcare-food-journal-{width}.png', full_page=True)
         page.get_by_role('link', name='Документы', exact=True).click()
         page.evaluate('''() => {
             state.health = [{id:'visit-new',petId:pet().id,title:'Анализ крови',type:'other',date:'2026-11-15',attachment:{name:'new.pdf'}},
