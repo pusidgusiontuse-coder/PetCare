@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20261114-local-ocr">
+  <link rel="stylesheet" href="/styles.css?v=20261116-mobile-ux">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -54,7 +54,7 @@
 
   <main class="content" id="main-content" tabindex="-1">
     <header class="app-header">
-      <div id="breadcrumbs" class="breadcrumbs"></div>
+      <div id="breadcrumbs" class="breadcrumbs" hidden aria-hidden="true"></div>
       <div class="header-tools">
         <span class="header-date" id="header-date"></span>
         <button class="btn" id="api-open" type="button" hidden>Войти в аккаунт</button>
@@ -88,12 +88,13 @@
       <div class="topline">
         <div>
           <p class="eyebrow">МЕДИЦИНСКАЯ КАРТА</p>
-          <h1>Здоровье</h1>
+          <h1>Обзор здоровья</h1>
           <span class="subtle" id="health-pet-name"></span>
         </div>
         <button class="btn primary" data-modal="health" type="button">+ Запись</button>
       </div>
-      <details class="pet-profile-panel" id="health-pet-profile" open>
+      <div id="health-overview" class="health-overview" aria-label="Сводка здоровья"></div>
+      <details class="pet-profile-panel" id="health-pet-profile">
         <summary>
           <span class="profile-pet-avatar" id="health-profile-avatar" aria-hidden="true"></span>
           <span class="profile-pet-heading">
@@ -379,29 +380,13 @@
           <div class="panel-head">
             <div>
               <h2 id="match-form-heading">Анкета питомца</h2>
-              <p class="small" style="margin:4px 0 0">Заполните анкету для активного питомца, чтобы другие владельцы могли найти вас</p>
+              <p class="small" style="margin:4px 0 0">Добавьте город, цель знакомства и удобный способ связи. Повторно регистрировать питомца не нужно.</p>
             </div>
           </div>
           <form id="match-profile-form" class="form-grid">
-            <label class="field">Имя питомца
-              <input name="name" type="text" required placeholder="Например: Барсик">
-            </label>
-            <label class="field">Вид животного
-              <input name="species" type="text" required placeholder="Кот, Кошка, Собака…">
-            </label>
-            <label class="field">Порода
-              <input name="breed" type="text" required placeholder="Британская короткошёрстная, Овчарка…">
-            </label>
-            <label class="field">Дата рождения
-              <input name="birth_date" type="date">
-            </label>
-            <label class="field">Пол
-              <select name="sex">
-                <option value="Неизвестно">Не указано</option>
-                <option value="Самец">Самец</option>
-                <option value="Самка">Самка</option>
-              </select>
-            </label>
+            <div id="match-identity" class="match-identity full"></div>
+            <p class="small full">Данные берём из карточки питомца. <button type="button" class="btn tiny" id="match-edit-pet">Изменить карточку</button></p>
+            <input name="name" type="hidden"><input name="species" type="hidden"><input name="breed" type="hidden"><input name="birth_date" type="hidden"><input name="sex" type="hidden">
             <label class="field">Прививки
               <select name="vaccinated">
                 <option value="Не указано">Не указано</option>
@@ -410,12 +395,7 @@
                 <option value="Нет прививок">Нет прививок</option>
               </select>
             </label>
-            <label class="field">Стерилизация / кастрация
-              <select name="sterilized">
-                <option value="Нет">Нет</option>
-                <option value="Да">Да</option>
-              </select>
-            </label>
+            <input name="sterilized" type="hidden">
             <label class="field">Цель поиска
               <select name="purpose">
                 <option value="Совместные прогулки и игры">Совместные прогулки и игры</option>
@@ -424,7 +404,7 @@
               </select>
             </label>
             <label class="field">Город и район
-              <input name="city" type="text" placeholder="Например: Москва, Сокольники">
+              <input name="city" type="text" required placeholder="Например: Москва, Сокольники">
             </label>
             <label class="field">Имя хозяина
               <input name="owner_name" type="text" required placeholder="Ваше имя">
@@ -438,8 +418,10 @@
             <label class="field full">Фотография для анкеты (необязательно)
               <input name="photo_file" id="match-photo-input" type="file" accept="image/jpeg,image/png,image/webp">
             </label>
+            <label class="check-row full"><input type="checkbox" id="match-publish-consent"><span>Разрешаю показывать анкету и указанный контакт другим владельцам в разделе «Друзья».</span></label>
             <div class="form-actions full" style="justify-content:flex-start">
-              <button type="submit" class="btn primary" id="btn-save-match-profile">Выложить анкету в базу</button>
+              <button type="submit" class="btn primary" id="btn-save-match-profile">Опубликовать анкету</button>
+              <button type="submit" class="btn" id="btn-save-match-draft" formnovalidate>Сохранить черновик</button>
               <span id="match-profile-feedback" class="small" role="status" aria-live="polite"></span>
             </div>
           </form>
@@ -1342,6 +1324,16 @@ function renderHealth() {
   const p = pet();
   if (!p) return;
   $('health-pet-name').textContent = p.name + (p.isShared ? ' · Совместный уход' : '');
+  const weights=state.weights.filter(w=>isForPet(w,p)).sort((a,b)=>b.date.localeCompare(a.date));
+  const records=state.health.filter(h=>isForPet(h,p));
+  const next=records.filter(h=>h.nextDate&&h.nextDate>=today()).sort((a,b)=>a.nextDate.localeCompare(b.nextDate))[0];
+  const active=state.prescriptions.filter(x=>isForPet(x,p)&&x.status==='Активно').length;
+  $('health-overview').innerHTML = [
+    ['Вес',weights.length?weights[0].kg+' кг':'Нет измерений',weights.length?date(weights[0].date):'Добавьте первое измерение','weight'],
+    ['Следующая процедура',next?new Date(next.nextDate+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}):'Не запланирована',next?next.title:'Добавьте запись с датой повтора','health'],
+    ['Назначения',active?String(active)+' активных':'Нет активных', 'По назначениям ветеринара','prescription']
+  ].map(([label,value,hint,modal])=>'<button type="button" class="health-stat" data-modal="'+modal+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(hint)+'</small></button>').join('');
+  $('health-overview').querySelectorAll('[data-modal]').forEach(b=>b.onclick=()=>document.querySelector('#health .panel [data-modal="'+b.dataset.modal+'"], #health .topline [data-modal="'+b.dataset.modal+'"]').click());
   $('health-filters').innerHTML = filters.map(([v, t]) => '<button class="chip ' + (healthFilter === v ? 'active' : '') + '" data-health-filter="' + v + '" type="button">' + t + '</button>').join('');
   document.querySelectorAll('[data-health-filter]').forEach(b => b.onclick = () => { healthFilter = b.dataset.healthFilter; renderHealth(); });
 
@@ -1847,18 +1839,21 @@ function populateMatchFormFromPet(forceFromPetCard = false) {
   const existing = !forceFromPetCard ? m.myProfile : null;
   const hasVacc = state.health.some(h => isForPet(h, p) && h.type === 'vaccination');
 
-  form.elements.namedItem('name').value = existing?.name || p.name || '';
-  form.elements.namedItem('species').value = existing?.species || p.species || '';
-  form.elements.namedItem('breed').value = existing?.breed || p.breed || '';
-  form.elements.namedItem('birth_date').value = existing?.birth_date || p.birthDate || '';
-  form.elements.namedItem('sex').value = existing?.sex || p.sex || 'Неизвестно';
-  form.elements.namedItem('vaccinated').value = existing?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано');
-  form.elements.namedItem('sterilized').value = existing?.sterilized || (p.sterilized === 'Да' ? 'Да' : 'Нет');
+  form.elements.namedItem('name').value = p.name || '';
+  form.elements.namedItem('species').value = p.species || '';
+  form.elements.namedItem('breed').value = p.breed || '';
+  form.elements.namedItem('birth_date').value = p.birthDate || '';
+  form.elements.namedItem('sex').value = p.sex || 'Неизвестно';
+  form.elements.namedItem('vaccinated').value = existing?.vaccinated || (hasVacc ? 'Частично (по графику)' : 'Не указано');
+  form.elements.namedItem('sterilized').value = (p.sterilized === 'Да' ? 'Да' : 'Нет');
   form.elements.namedItem('purpose').value = existing?.purpose || 'Совместные прогулки и игры';
   form.elements.namedItem('city').value = existing?.city || '';
   form.elements.namedItem('owner_name').value = existing?.owner_name || state.user.name || '';
   form.elements.namedItem('owner_contact').value = existing?.owner_contact || '';
   form.elements.namedItem('bio').value = existing?.bio || p.notes || '';
+  $('match-identity').innerHTML = '<strong>'+esc(p.name)+'</strong><span>'+esc([p.species,p.breed,petProfileAge(p.birthDate),p.sex].filter(Boolean).join(' · '))+'</span>';
+  $('match-publish-consent').checked = Boolean(existing?.is_published);
+  $('match-edit-pet').onclick = () => { show('health'); $('health-pet-profile').open=true; $('health-pet-profile').scrollIntoView({block:'start',behavior:'smooth'}); };
   form.dataset.petId = String(p.id);
 }
 
@@ -1956,11 +1951,11 @@ function renderMatch() {
       '<span class="match-context-avatar">' + petAvatar(p) + '</span>' +
       '<div class="match-context-info">' +
         '<strong>Питомец: ' + esc(p.name) + '</strong>' +
-        '<small>' + esc(p.species) + ' · Порода: ' + esc(myProf?.breed || p.breed || 'Метис') + ' · Возраст: ' + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + ' · Прививки: ' + esc(myProf?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано')) + '</small>' +
+        '<small>' + esc(p.species) + ' · Порода: ' + esc(myProf?.breed || p.breed || 'Метис') + ' · Возраст: ' + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + ' · Прививки: ' + esc(myProf?.vaccinated || (hasVacc ? 'Частично (по графику)' : 'Не указано')) + '</small>' +
       '</div>' +
     '</div>' +
     '<div class="row">' +
-      '<span class="care-tag ' + (myProf ? 'done-tag' : 'overdue-tag') + '">' + (myProf ? 'Анкета опубликована ✓' : 'Анкета ещё не заполнена') + '</span>' +
+      '<span class="care-tag ' + (myProf ? 'done-tag' : 'overdue-tag') + '">' + (myProf?.is_published ? 'Анкета опубликована ✓' : myProf ? 'Черновик анкеты' : 'Анкеты пока нет') + '</span>' +
       '<button type="button" class="btn tiny" id="btn-context-edit-profile">' + (myProf ? 'Редактировать анкету' : 'Заполнить анкету') + '</button>' +
     '</div>';
 
@@ -2122,6 +2117,8 @@ if ($('match-profile-form')) {
     const p = pet();
     if (!p || !p.serverId) return;
     const form = event.currentTarget;
+    const publish = event.submitter?.id !== 'btn-save-match-draft';
+    if (publish && !$('match-publish-consent').checked) { $('match-profile-feedback').textContent='Подтвердите публикацию анкеты и контакта.'; return; }
     const raw = Object.fromEntries(new FormData(form));
     const photoFile = $('match-photo-input')?.files?.[0];
     let photoData = null;
@@ -2135,7 +2132,8 @@ if ($('match-profile-form')) {
 
     const submitBtn = $('btn-save-match-profile');
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Сохраняем в базу…';
+    $('btn-save-match-draft').disabled = true;
+    submitBtn.textContent = 'Сохраняем…';
     try {
       await apiFetch('/pets/' + p.serverId + '/match-profile', {
         method: 'POST',
@@ -2153,18 +2151,20 @@ if ($('match-profile-form')) {
           owner_contact: String(raw.owner_contact || '').trim(),
           bio: String(raw.bio || '').trim(),
           ...(photoData ? { photo: photoData } : {}),
-          is_published: true
+          is_published: publish
         })
       });
       if (photoData) p.photo = photoData;
-      logActivity(p.id, 'Опубликовал(а) анкету питомца ' + p.name, '🐾');
+      logActivity(p.id, (publish ? 'Опубликовал(а) анкету питомца ' : 'Сохранил(а) черновик анкеты ') + p.name, '🐾');
       await loadMatchDataForActivePet(false);
-      setMatchTab('discover');
+      setMatchTab(publish ? 'discover' : 'profile');
+      $('match-profile-feedback').textContent=publish?'Анкета опубликована.':'Черновик сохранён. Другие владельцы его не видят.';
     } catch (err) {
       $('match-profile-feedback').textContent = err.message || 'Ошибка сохранения анкеты';
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Выложить анкету в базу';
+      submitBtn.textContent = 'Опубликовать анкету';
+      $('btn-save-match-draft').disabled = false;
     }
   };
 }
@@ -3934,6 +3934,6 @@ syncServerData().then(() => {
   scheduleNextExactPush();
 });
 </script>
-<script src="/static/enhancements.js?v=20261114-ocr"></script>
+<script src="/static/enhancements.js?v=20261116-mobile-ux"></script>
 </body>
 </html>

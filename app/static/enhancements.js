@@ -8,7 +8,7 @@ featureRoot.innerHTML=`<h2>Безопасность и приложение</h2>
 <button type="button" class="btn" id="sessions-open">Устройства и входы</button>
 <button type="button" class="btn" id="logout-everywhere">Выйти на всех устройствах</button>
 <button type="button" class="btn" id="export-account">Скачать свои данные</button></div>
-<p id="email-status"></p><p id="plan-status"></p><label><input type="checkbox" id="email-reminders"> Получать напоминания по почте</label><p><button type="button" class="btn primary" id="install-petcare">Установить PetCare</button> <button type="button" class="btn" id="subscribe-push">Уведомления при закрытом сайте</button></p>
+<p id="email-status"></p><p id="plan-status"></p><label class="check-row"><input type="checkbox" id="email-reminders"><span>Получать напоминания по почте</span></label><p><button type="button" class="btn primary" id="install-petcare">Установить PetCare</button> <button type="button" class="btn" id="subscribe-push">Уведомления при закрытом сайте</button></p>
 <div id="session-list"></div><div id="server-members"></div><p id="feature-feedback" role="status"></p>`;
 document.querySelector('#profile')?.append(featureRoot);
 const securityDialog=document.createElement('dialog'); securityDialog.id='security-dialog';
@@ -46,8 +46,9 @@ $('sessions-open').onclick=async()=>{try{const list=await apiFetch('/auth/sessio
 $('logout-everywhere').onclick=async()=>{try{await apiFetch('/auth/logout-all',{method:'POST'});authToken='';localStorage.removeItem(STORAGE_AUTH_KEY);location.reload();}catch(e){feedback(e.message);}};
 $('export-account').onclick=async()=>{try{const result=await apiFetch('/account/export');const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='petcare-export.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message);}};
 let installPrompt;
+if(matchMedia('(display-mode: standalone)').matches||navigator.standalone===true){$('install-petcare').textContent='Открыто как приложение';$('install-petcare').disabled=true;}
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;});
-$('install-petcare').onclick=async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else if(matchMedia('(display-mode: standalone)').matches){feedback('PetCare уже открыт как приложение.');}else{feedback(/iPhone|iPad|iPod/.test(navigator.userAgent)?'В Safari нажмите «Поделиться» → «На экран Домой» → «Добавить».':'Откройте меню браузера → «Установить приложение» или «Добавить на главный экран».');}};
+$('install-petcare').onclick=async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else if(matchMedia('(display-mode: standalone)').matches||navigator.standalone===true){feedback('PetCare уже открыт как приложение.');}else{feedback(/iPhone|iPad|iPod/.test(navigator.userAgent)?'В Safari нажмите «Поделиться» → «На экран Домой» → «Добавить».':'Откройте меню браузера → «Установить приложение» или «Добавить на главный экран».');}};
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>feedback('Не удалось подготовить установку приложения. Проверьте сеть и HTTPS.'));
 function base64Key(value){return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4)),c=>c.charCodeAt(0));}
 $('subscribe-push').onclick=async()=>{try{
@@ -71,7 +72,7 @@ const adminPanel=document.createElement('section');adminPanel.className='panel';
 adminPanel.innerHTML='<h2>Администрирование</h2><div id="admin-stats"></div><label class="field">Поиск по имени или почте<input id="admin-search" type="search"></label><button type="button" class="btn" id="admin-refresh">Показать пользователей</button><div id="admin-users"></div><button type="button" class="btn" id="admin-next">Следующая страница</button><button type="button" class="btn" id="admin-audit-button">Журнал действий</button><div id="admin-audit"></div>';featureRoot.after(adminPanel);
 let adminOffset=0;
 async function loadAdmin(){
- const me=await apiFetch('/auth/me');$('plan-status').textContent=me.premium?'Расширенный доступ: ИИ и больше трёх питомцев.':'Бесплатный доступ: до трёх питомцев. ИИ доступен в платной версии; доступ выдаёт администратор.';$('email-reminders').checked=Boolean(state.settings.emailEnabled);$('email-status').textContent=me.email_verified?'Почта подтверждена':'Подтвердите почту для восстановления доступа. Администратору сначала нужно указать настоящую почту через «Изменить почту».';
+ const me=await apiFetch('/auth/me');$('plan-status').textContent=me.premium?'Расширенный доступ: ИИ и больше трёх питомцев.':'Бесплатный доступ: до трёх питомцев. ИИ доступен в платной версии; доступ выдаёт администратор.';$('email-reminders').checked=Boolean(state.settings.emailEnabled);$('email-status').textContent=me.email_verified?'Почта подтверждена':'Почта пока не подтверждена. Аккаунт работает; восстановление пароля по письму станет доступно после подключения почты.';
  adminPanel.hidden=!me.is_admin;if(!me.is_admin)return;
  const stats=await apiFetch('/admin/status');$('admin-stats').textContent=`Пользователей: ${stats.users}, питомцев: ${stats.pets}, документов: ${stats.documents}. Почта: ${stats.smtp_configured?'подключена':'не подключена'}, ИИ: ${stats.ocr_configured?'подключён':'нужен API-ключ'}, Push: ${stats.push_configured?'ключи созданы':'не настроен'}.`;
  const r=await apiFetch('/admin/users?offset='+adminOffset+'&search='+encodeURIComponent($('admin-search').value));
