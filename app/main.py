@@ -1900,13 +1900,13 @@ def save_pet_match_profile(
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
     existing = db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).first()
     if existing:
-        existing.name = data.name
-        existing.species = data.species
-        existing.breed = data.breed or "Метис"
-        existing.birth_date = data.birth_date
-        existing.sex = data.sex or "Неизвестно"
+        existing.name = pet.name
+        existing.species = pet.species
+        existing.breed = pet.breed
+        existing.birth_date = pet.birth_date.isoformat()
+        existing.sex = pet.sex or "Неизвестно"
         existing.vaccinated = data.vaccinated or "Не указано"
-        existing.sterilized = data.sterilized or "Нет"
+        existing.sterilized = "Да" if pet.sterilized else "Нет"
         existing.purpose = data.purpose or "Совместные прогулки и игры"
         existing.city = data.city or ""
         existing.bio = data.bio
@@ -1919,20 +1919,20 @@ def save_pet_match_profile(
         existing = models.MatchProfile(
             pet_id=pet_id,
             owner_id=current_user.id,
-            name=data.name,
-            species=data.species,
-            breed=data.breed or "Метис",
-            birth_date=data.birth_date,
-            sex=data.sex or "Неизвестно",
+            name=pet.name,
+            species=pet.species,
+            breed=pet.breed,
+            birth_date=pet.birth_date.isoformat(),
+            sex=pet.sex or "Неизвестно",
             vaccinated=data.vaccinated or "Не указано",
-            sterilized=data.sterilized or "Нет",
+            sterilized="Да" if pet.sterilized else "Нет",
             purpose=data.purpose or "Совместные прогулки и игры",
             city=data.city or "",
             bio=data.bio,
             owner_name=data.owner_name or current_user.full_name,
             owner_contact=data.owner_contact,
             photo=data.photo or pet.photo_file_id,
-            is_published=True
+            is_published=data.is_published if data.is_published is not None else True
         )
         db.add(existing)
     if data.photo:

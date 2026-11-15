@@ -199,6 +199,15 @@ def install_features(app):
         password_ok(data.password)
         enforce_quota(db, 'register:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 20)
         if db.query(models.User).filter(models.User.email==data.email).first(): raise HTTPException(400,'Этот адрес уже зарегистрирован. Войдите или восстановите пароль.')
+        # Registration must remain available before SMTP is connected. Never mark
+        # the address verified or grant premium/admin privileges without proof.
+        if not (os.getenv('SMTP_HOST') and os.getenv('SMTP_FROM')):
+            u=models.User(full_name=data.full_name,email=data.email,hashed_password=get_password_hash(data.password),timezone=data.timezone,email_verified=False)
+            db.add(u)
+            try: db.commit()
+            except IntegrityError:
+                db.rollback(); raise HTTPException(409,'Этот адрес уже зарегистрирован.')
+            return {'access_token':create_access_token({'sub':str(u.id)},device=request.headers.get('user-agent','Браузер')[:200]),'token_type':'bearer','user':user_json(u)}
         return issue_code(db, data.email, 'register', payload={'full_name':data.full_name, 'hashed_password':get_password_hash(data.password), 'timezone':data.timezone})
 
     @router.post('/auth/login')

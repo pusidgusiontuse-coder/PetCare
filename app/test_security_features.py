@@ -18,6 +18,8 @@ def client(): return TestClient(main.app)
 @pytest.fixture
 def mail(monkeypatch):
     sent=[]
+    monkeypatch.setenv("SMTP_HOST","smtp.test")
+    monkeypatch.setenv("SMTP_FROM","noreply@example.com")
     monkeypatch.setattr(features,'send_email',lambda address,subject,body:sent.append((address,body)))
     return sent
 
@@ -280,3 +282,28 @@ def test_background_push_deduplicates_without_open_browser(client,monkeypatch):
     with patch('pywebpush.webpush') as send:
         run(datetime(2026,11,13,15,1,tzinfo=MSK));run(datetime(2026,11,13,15,2,tzinfo=MSK))
         assert send.call_count==1
+
+
+def test_registration_without_mail_creates_unverified_free_account(client,monkeypatch):
+    monkeypatch.delenv('SMTP_HOST',raising=False)
+    monkeypatch.delenv('SMTP_FROM',raising=False)
+    email=uuid.uuid4().hex+'@example.com'
+    r=client.post('/api/v1/auth/register',json={'full_name':'Новый владелец','email':email,'password':'safe-password-123'})
+    assert r.status_code==200,r.text
+    assert r.json()['access_token']
+    assert not r.json()['user']['email_verified']
+    assert not r.json()['user']['premium'] and not r.json()['user']['is_admin']
+    assert client.post('/api/v1/auth/login',json={'email':email,'password':'safe-password-123'}).status_code==200
+    assert client.post('/api/v1/auth/register',json={'full_name':'Другой','email':email,'password':'safe-password-123'}).status_code in (400,409)
+
+
+def test_match_draft_uses_pet_identity_and_remains_private(client):
+    uid,email,h=user();p=pet(client,h)
+    data={'name':'Подменённое имя','species':'Собака','breed':'Другая','owner_contact':'','city':'','is_published':False}
+    r=client.post(f"/api/v1/pets/{p['id']}/match-profile",headers=h,json=data)
+    assert r.status_code==200,r.text
+    assert r.json()['name']==p['name'] and r.json()['species']==p['species']
+    assert r.json()['is_published'] is False
+    data.update(owner_contact='@example',city='Москва',is_published=True)
+    r=client.post(f"/api/v1/pets/{p['id']}/match-profile",headers=h,json=data)
+    assert r.status_code==200 and r.json()['is_published'] is True
