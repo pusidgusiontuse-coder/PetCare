@@ -64,20 +64,20 @@ jobs:
     timeout-minutes: 20
     environment:
       name: production
-      url: ${{ vars.SITE_URL }}
+      url: ${{ vars.SITE_URL || 'https://naumenkoilia.ru' }}
     concurrency:
       group: production
       cancel-in-progress: false
     env:
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_HOST: ${{ secrets.SSH_HOST || 'server15.hosting.reg.ru' }}
+      SSH_USER: ${{ secrets.SSH_USER || 'u3340622' }}
       SSH_PORT: ${{ vars.SSH_PORT || '22' }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
-      PUBLIC_DIR: ${{ vars.PUBLIC_DIR }}
-      SITE_URL: ${{ vars.SITE_URL }}
-      HOST_PYTHON: ${{ vars.HOST_PYTHON || '/opt/python/python-3.12/bin/python' }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/var/www/u3340622/data/petcare-regru' }}
+      PUBLIC_DIR: ${{ vars.PUBLIC_DIR || '/var/www/u3340622/data/www/naumenkoilia.ru' }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://naumenkoilia.ru' }}
+      HOST_PYTHON: ${{ vars.HOST_PYTHON || '/var/www/u3340622/data/petcare-regru/.venv/bin/python' }}
     steps:
       - uses: actions/checkout@v4
         with:
