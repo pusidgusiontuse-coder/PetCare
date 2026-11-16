@@ -578,12 +578,17 @@
     </div>
   </div>
   <div id="picker-time-panel" role="tabpanel" aria-labelledby="picker-time-tab" hidden>
-    <div class="time-steppers">
-      <div class="time-stepper"><label for="picker-hour">Часы</label><button type="button" class="picker-icon" data-time-part="hour" data-step="1" aria-label="На час позже">+</button><input id="picker-hour" class="time-digit" type="number" min="0" max="23" step="1" inputmode="numeric" value="9"><button type="button" class="picker-icon" data-time-part="hour" data-step="-1" aria-label="На час раньше">−</button></div>
-      <span class="time-divider" aria-hidden="true">:</span>
-      <div class="time-stepper"><label for="picker-minute">Минуты</label><button type="button" class="picker-icon" data-time-part="minute" data-step="1" aria-label="На минуту позже">+</button><input id="picker-minute" class="time-digit" type="number" min="0" max="59" step="1" inputmode="numeric" value="0"><button type="button" class="picker-icon" data-time-part="minute" data-step="-1" aria-label="На минуту раньше">−</button></div>
+    <p class="time-help">Прокрутите часы и минуты. Выбранное время — в выделенной строке.</p>
+    <div class="time-wheels" aria-label="Выбор времени">
+      <div class="time-wheel-column"><span id="picker-hours-label">Часы</span><div class="time-wheel-frame"><div id="picker-hour-wheel" class="time-wheel" role="listbox" tabindex="0" aria-labelledby="picker-hours-label" aria-describedby="picker-wheel-help"></div></div></div>
+      <span class="wheel-colon" aria-hidden="true">:</span>
+      <div class="time-wheel-column"><span id="picker-minutes-label">Минуты</span><div class="time-wheel-frame"><div id="picker-minute-wheel" class="time-wheel" role="listbox" tabindex="0" aria-labelledby="picker-minutes-label" aria-describedby="picker-wheel-help"></div></div></div>
     </div>
-    <p class="time-help">Нажимайте + / − или введите точное время</p>
+    <p class="picker-sr" id="picker-wheel-help">Прокрутите колонку или используйте стрелки вверх и вниз. Home — начало, End — конец.</p>
+    <details id="picker-manual-time" class="manual-time"><summary>Ввести время вручную</summary><div class="manual-time-fields">
+      <label class="field" for="picker-hour">Часы<input id="picker-hour" type="number" min="0" max="23" step="1" inputmode="numeric" value="9"></label>
+      <label class="field" for="picker-minute">Минуты<input id="picker-minute" type="number" min="0" max="59" step="1" inputmode="numeric" value="0"></label>
+    </div></details>
     <div class="picker-shortcuts">
       <button type="button" class="btn" data-preset-time="08:00">Утро · 08:00</button>
       <button type="button" class="btn" data-preset-time="13:00">День · 13:00</button>
@@ -3313,6 +3318,41 @@ setInterval(() => {
     get('calendar').innerHTML = html;
     if (focusDay) get('calendar').querySelector('[data-day="' + tabDay + '"]')?.focus();
   }
+  const wheelRowHeight = 44;
+  function markWheel(part, value, reposition = false) {
+    const wheel = get(part + '-wheel');
+    const previous = wheel.querySelector('[aria-selected="true"]');
+    if (previous) previous.setAttribute('aria-selected', 'false');
+    const option = get(part + '-option-' + value);
+    option.setAttribute('aria-selected', 'true');
+    wheel.setAttribute('aria-activedescendant', option.id);
+    if (reposition) wheel.scrollTop = value * wheelRowHeight;
+  }
+  function syncWheels() {
+    for (const part of ['hour','minute']) {
+      const input = get(part);
+      if (input.value !== '' && input.checkValidity()) markWheel(part, Number(input.value), true);
+    }
+  }
+  function chooseWheel(part, value, reposition = true) {
+    const max = part === 'hour' ? 23 : 59;
+    value = Math.max(0, Math.min(max, value));
+    draft[part] = value; get(part).value = pad(value);
+    markWheel(part, value, reposition); updatePreview(); error('');
+  }
+  for (const part of ['hour','minute']) {
+    const wheel = get(part + '-wheel'), count = part === 'hour' ? 24 : 60;
+    wheel.innerHTML = Array.from({length:count}, (_, value) => '<div role="option" aria-selected="false" id="picker-' + part + '-option-' + value + '" data-value="' + value + '" class="time-wheel-option">' + pad(value) + '</div>').join('');
+    wheel.addEventListener('scroll', () => {
+      if (picker.open && stage === 'time') chooseWheel(part, Math.round(wheel.scrollTop / wheelRowHeight), false);
+    }, {passive:true});
+    wheel.onclick = e => { const option = e.target.closest('[data-value]'); if (option) { wheel.focus({preventScroll:true}); chooseWheel(part, Number(option.dataset.value)); } };
+    wheel.onkeydown = e => {
+      const value = Number(get(part).value), last = count - 1;
+      const next = {ArrowUp:value-1, ArrowDown:value+1, PageUp:value-5, PageDown:value+5, Home:0, End:last}[e.key];
+      if (next === undefined) return; e.preventDefault(); chooseWheel(part,next);
+    };
+  }
   function showStage(next, focus = false) {
     if (picker.open && stage === 'date' && next === 'time' && get('direct').value !== draft.day.split('-').reverse().join('.') && !get('direct').onchange()) return;
     stage = next;
@@ -3325,14 +3365,15 @@ setInterval(() => {
     get('time-tab').setAttribute('aria-selected', String(stage === 'time'));
     get('apply').textContent = combined && stage === 'date' ? 'Далее: время' : source.type === 'date' ? 'Выбрать дату' : 'Готово';
     error(''); updatePreview();
+    if (stage === 'time') syncWheels();
     if (focus) {
       if (stage === 'date') get('calendar').querySelector('[tabindex="0"]')?.focus();
-      else get('hour').focus();
+      else get('hour-wheel').focus();
     }
   }
   function open(input) {
     if (picker.open || input.disabled || input.readOnly) return;
-    source = input;
+    source = input; get('manual-time').open = false;
     const label = [...(input.labels || [])].map(node => node.firstChild?.textContent.trim()).filter(Boolean).join(' ') || 'Дата и время';
     moscow = /МСК|Москв/i.test(label);
     const initial = input.value;
@@ -3370,17 +3411,10 @@ setInterval(() => {
     const clock = pad(draft.hour) + ':' + pad(draft.minute);
     commit(source.type === 'date' ? draft.day : source.type === 'time' ? clock : draft.day + 'T' + clock);
   };
-  picker.querySelectorAll('[data-time-part]').forEach(button => button.onclick = () => {
-    const h = Number(get('hour').value) || 0, m = Number(get('minute').value) || 0;
-    const delta = Number(button.dataset.step) * (button.dataset.timePart === 'hour' ? 60 : 1);
-    const total = (h * 60 + m + delta + 1440) % 1440;
-    draft.hour = Math.floor(total / 60); draft.minute = total % 60;
-    get('hour').value = pad(draft.hour); get('minute').value = pad(draft.minute); updatePreview();
-  });
   picker.querySelectorAll('[data-preset-time]').forEach(button => button.onclick = () => {
     const [hour, minute] = button.dataset.presetTime.split(':').map(Number);
     draft.hour = hour; draft.minute = minute;
-    get('hour').value = pad(hour); get('minute').value = pad(minute); updatePreview();
+    get('hour').value = pad(hour); get('minute').value = pad(minute); updatePreview(); syncWheels();
   });
   get('calendar').onclick = event => {
     const button = event.target.closest('[data-day]');
@@ -3388,6 +3422,7 @@ setInterval(() => {
       draft.day = button.dataset.day;
       const d = readDay(draft.day); viewYear = d.getFullYear(); viewMonth = d.getMonth();
       renderCalendar(draft.day); updatePreview();
+      if (source.type === 'datetime-local') showStage('time', true);
     }
   };
   picker.querySelectorAll('[data-relative-day]').forEach(button => button.onclick = () => {
@@ -3407,7 +3442,7 @@ setInterval(() => {
   get('direct').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); get('direct').onchange(); } };
   for (const part of ['hour','minute']) get(part).oninput = () => {
     if (get('hour').checkValidity() && get('minute').checkValidity()) {
-      draft.hour = Number(get('hour').value); draft.minute = Number(get('minute').value); updatePreview(); error('');
+      draft.hour = Number(get('hour').value); draft.minute = Number(get('minute').value); updatePreview(); syncWheels(); error('');
     }
   };
   get('calendar').onkeydown = e => {

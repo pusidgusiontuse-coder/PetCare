@@ -56,6 +56,7 @@ with sync_playwright() as p:
         page.locator('[data-relative-day="7"]').click()
         page.locator('#picker-apply').click()
         expect(page.locator('#picker-time-panel')).to_be_visible()
+        page.locator('#picker-manual-time summary').click()
         page.locator('#picker-hour').fill('25')
         page.locator('#picker-apply').click()
         expect(page.locator('#picker-error')).to_be_visible()

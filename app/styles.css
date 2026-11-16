@@ -4756,3 +4756,24 @@ h1,h2,h3 { text-wrap:balance; }
 @media(prefers-reduced-motion:reduce) {
   *, *::before, *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
 }
+
+/* Native scrolling and snap alignment make hours/minutes independent wheels. */
+.time-wheels { display:grid; grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr); align-items:center; gap:16px; margin:20px 0; }
+.time-wheel-column { min-width:0; text-align:center; }
+.time-wheel-column > span { display:block; font-size:14px; font-weight:600; margin-bottom:10px; }
+.time-wheel-frame { position:relative; background:var(--bg); border:1px solid var(--line); border-radius:18px; overflow:hidden; }
+.time-wheel-frame::after { content:""; pointer-events:none; position:absolute; inset:88px 6px auto; height:44px; border-block:1px solid var(--line); background:color-mix(in srgb,var(--soft) 40%,transparent); border-radius:10px; }
+.time-wheel { height:220px; padding-block:88px; overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; scroll-snap-type:y mandatory; scrollbar-width:none; -webkit-overflow-scrolling:touch; mask-image:linear-gradient(transparent,black 30%,black 70%,transparent); }
+.time-wheel::-webkit-scrollbar { display:none; }
+.time-wheel-option { position:relative; height:44px; display:flex; align-items:center; justify-content:center; scroll-snap-align:center; font-size:26px; line-height:1; font-weight:500; color:var(--muted); font-variant-numeric:tabular-nums; cursor:pointer; user-select:none; }
+.time-wheel-option[aria-selected="true"] { font-size:30px; font-weight:750; color:var(--accent-dark); }
+.time-wheel:focus-visible { outline:3px solid var(--accent); outline-offset:-3px; border-radius:16px; }
+.wheel-colon { font-size:28px; font-weight:700; padding-top:26px; text-align:center; }
+.manual-time { margin:12px 0 20px; border-bottom:1px solid var(--line); padding-bottom:12px; }
+.manual-time summary { min-height:44px; cursor:pointer; padding:10px 0; font-size:14px; font-weight:600; }
+.manual-time-fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:12px 0; }
+.manual-time input { width:100%; min-height:48px; font-size:18px; }
+@media(max-width:420px) { .time-wheels { gap:10px; } }
+.time-wheel { position:relative; z-index:1; }
+.time-wheel-frame::after { z-index:0; }
+.time-wheel-frame:has(.time-wheel:focus-visible) { outline:3px solid var(--accent); outline-offset:3px; }
