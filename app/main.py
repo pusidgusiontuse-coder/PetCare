@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, select
 
-from settings import ENABLE_DEMO_LOGIN
+from settings import ENABLE_DEMO_LOGIN, PRODUCTION
 import models
 import schemas
 from database import engine, get_db
@@ -19,6 +19,11 @@ from auth import get_password_hash, verify_password, create_access_token, get_cu
 # Schema changes are applied explicitly before starting workers.
 from schema import check_schema
 check_schema(engine)
+if PRODUCTION and os.environ.get('MIGRATION_DATABASE_URL'):
+    raise RuntimeError('Migration credentials must not be loaded into the web process')
+if PRODUCTION or os.getenv('ENFORCE_DB_PERMISSIONS') == 'true':
+    from db_security import assert_runtime_permissions
+    assert_runtime_permissions(engine)
 
 OPENAPI_TAGS = [
     {
@@ -82,6 +87,28 @@ app = FastAPI(
     openapi_tags=OPENAPI_TAGS,
 )
 
+if PRODUCTION:
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    allowed_hosts = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '').split(',') if host.strip()]
+    if not allowed_hosts or '*' in allowed_hosts:
+        raise RuntimeError('Set explicit ALLOWED_HOSTS for production')
+    app.add_middleware(HTTPSRedirectMiddleware)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+from security import SecurityMiddleware
+app.add_middleware(SecurityMiddleware, production=PRODUCTION)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    # Never echo passwords, base64 files or complete request payloads in errors.
+    return JSONResponse(status_code=422, content={'detail': [
+        {'loc': list(error['loc']), 'msg': error['msg'], 'type': error['type']}
+        for error in exc.errors()
+    ]})
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -102,12 +129,28 @@ def get_user_pet_or_404(pet_id: int, user_id: int, db: Session, write: bool = Fa
             models.PetMember.pet_id == pet_id,
             models.PetMember.user_id == user_id
         ).first()
-        if not is_member or (is_member.expires_at and is_member.expires_at <= datetime.utcnow()) or (write and is_member.role == "viewer"):
+        if not is_member or is_member.role not in {"viewer", "editor", "co_owner"} or (is_member.expires_at and is_member.expires_at <= datetime.utcnow()) or (write and is_member.role not in {"editor", "co_owner"}):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="У вас нет доступа к этому питомцу"
             )
     return pet
+
+def pet_response(pet, user_id, detail=False):
+    schema = schemas.PetDetailOut if detail else schemas.PetOut
+    result = schema.model_validate(pet)
+    if pet.owner_id != user_id:
+        result.share_code = None
+    return result
+
+
+def active_member_pet_ids(db, user_id):
+    return [row.pet_id for row in db.query(models.PetMember).filter(
+        models.PetMember.user_id == user_id,
+        models.PetMember.role.in_(['viewer', 'editor', 'co_owner']),
+        or_(models.PetMember.expires_at.is_(None), models.PetMember.expires_at > datetime.utcnow()),
+    ).all()]
+
 
 def user_has_pet_access(pet_id: int, user_id: int, db: Session, write: bool = False) -> bool:
     pet = db.query(models.Pet).filter(models.Pet.id == pet_id).first()
@@ -116,7 +159,7 @@ def user_has_pet_access(pet_id: int, user_id: int, db: Session, write: bool = Fa
     if pet.owner_id == user_id:
         return True
     member = db.query(models.PetMember).filter(models.PetMember.pet_id == pet_id, models.PetMember.user_id == user_id).first()
-    return bool(member and (not member.expires_at or member.expires_at > datetime.utcnow()) and (not write or member.role != "viewer"))
+    return bool(member and member.role in {"viewer", "editor", "co_owner"} and (not member.expires_at or member.expires_at > datetime.utcnow()) and (not write or member.role in {"editor", "co_owner"}))
 
 # =====================================================================
 # 1. АВТОРИЗАЦИЯ И СЕССИЯ (/api/v1/auth)
@@ -656,7 +699,7 @@ def demo_login(account_id: int, db: Session = Depends(get_db)):
         return {"access_token": token, "token_type": "bearer", "user": user}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка демо-входа: {str(e)}")
+        raise HTTPException(status_code=500, detail="Не удалось подготовить демо-аккаунт")
 
 
 @app.get("/api/v1/auth/session", response_model=schemas.UserOut, tags=["Авторизация и профиль"], summary="Проверка текущей сессии пользователя")
@@ -698,7 +741,7 @@ def create_pet(
     from features import enforce_pet_limit
     enforce_pet_limit(db, current_user)
 
-    code = pet_data.share_code or models.generate_pet_share_code()
+    code = models.generate_pet_share_code()
     new_pet = models.Pet(
         owner_id=current_user.id,
         name=pet_data.name,
@@ -730,6 +773,8 @@ def join_pet_by_code(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    from features import enforce_quota
+    enforce_quota(db, 'invite:'+str(current_user.id)+':'+datetime.utcnow().strftime('%Y%m%d%H'), 20)
     code = payload.invite_code.strip().upper().replace(" ", "")
     if not code:
         raise HTTPException(status_code=400, detail="Введите код совместного ухода")
@@ -740,15 +785,19 @@ def join_pet_by_code(
 
     if pet.owner_id == current_user.id:
         pet.is_shared = True
-        return pet
+        return pet_response(pet, current_user.id)
 
     existing = db.query(models.PetMember).filter(
         models.PetMember.pet_id == pet.id,
         models.PetMember.user_id == current_user.id
     ).first()
     if existing:
+        if existing.role not in {'viewer', 'editor', 'co_owner'}:
+            raise HTTPException(403, 'Доступ отозван. Обратитесь к владельцу.')
+        if existing.expires_at and existing.expires_at <= datetime.utcnow():
+            raise HTTPException(403, 'Срок доступа истёк. Обратитесь к владельцу.')
         pet.is_shared = True
-        return pet
+        return pet_response(pet, current_user.id)
 
     from features import enforce_pet_limit
     enforce_pet_limit(db, current_user)
@@ -765,7 +814,7 @@ def join_pet_by_code(
     db.commit()
     db.refresh(pet)
     pet.is_shared = True
-    return pet
+    return pet_response(pet, current_user.id)
 
 
 @app.get("/api/v1/pets", response_model=List[schemas.PetOut], tags=["Питомцы и совместный уход"], summary="Список всех питомцев пользователя (своих и совместных)")
@@ -773,7 +822,7 @@ def get_user_pets(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = [m.pet_id for m in db.query(models.PetMember).filter(models.PetMember.user_id == current_user.id).all() if not m.expires_at or m.expires_at > datetime.utcnow()]
+    member_pet_ids = active_member_pet_ids(db, current_user.id)
     pets = db.query(models.Pet).filter(
         (models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids))
     ).all()
@@ -785,7 +834,7 @@ def get_user_pets(
         p.is_shared = (p.owner_id != current_user.id or bool(p.members))
     if needs_commit:
         db.commit()
-    return pets
+    return [pet_response(p, current_user.id) for p in pets]
 
 
 @app.get("/api/v1/pets/{pet_id}", response_model=schemas.PetDetailOut, tags=["Питомцы и совместный уход"], summary="Получить полную карточку питомца со всеми записями")
@@ -796,7 +845,7 @@ def get_pet(
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
     pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
-    return pet
+    return pet_response(pet, current_user.id, detail=True)
 
 
 @app.put("/api/v1/pets/{pet_id}", response_model=schemas.PetOut, tags=["Питомцы и совместный уход"], summary="Обновить карточку питомца")
@@ -815,7 +864,7 @@ def update_pet(
     db.commit()
     db.refresh(pet)
     pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
-    return pet
+    return pet_response(pet, current_user.id)
 
 
 @app.delete("/api/v1/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Питомцы и совместный уход"], summary="Удалить питомца или выйти из совместного ухода")
@@ -1088,6 +1137,11 @@ def add_feeding_log(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    for model, record_id in ((models.MealPlan, log_data.meal_plan_id), (models.Reminder, log_data.reminder_id)):
+        if record_id is not None:
+            record = db.get(model, record_id)
+            if not record or record.pet_id != pet.id:
+                raise HTTPException(404, 'Связанная запись не найдена у этого питомца')
     new_log = models.FeedingLog(
         pet_id=pet.id,
         food=log_data.food,
@@ -1189,7 +1243,7 @@ def get_all_reminders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = [m.pet_id for m in db.query(models.PetMember).filter(models.PetMember.user_id == current_user.id).all() if not m.expires_at or m.expires_at > datetime.utcnow()]
+    member_pet_ids = active_member_pet_ids(db, current_user.id)
     query = db.query(models.Reminder).join(models.Pet)
     if member_pet_ids:
         query = query.filter((models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids)))
@@ -1344,6 +1398,25 @@ def get_documents(
     return pet.documents
 
 
+@app.get('/api/v1/documents/{doc_id}/download', tags=['Документы и ИИ-распознавание'])
+def download_document(doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    from uploads import validate_attachment
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    import base64
+    doc = db.get(models.Document, doc_id)
+    if not doc: raise HTTPException(404, 'Документ не найден')
+    get_user_pet_or_404(doc.pet_id, current_user.id, db)
+    if not doc.file_data: raise HTTPException(404, 'У документа нет вложения')
+    try: value, filename = validate_attachment(doc.file_data, doc.file_name)
+    except ValueError: raise HTTPException(415, 'Вложение не прошло проверку безопасности') from None
+    data = base64.b64decode(value.split(',', 1)[1])
+    return Response(data, media_type='application/octet-stream', headers={
+        'Content-Disposition': "attachment; filename=attachment; filename*=UTF-8''" + quote(filename, safe=''),
+        'Content-Security-Policy': "sandbox; default-src 'none'",
+    })
+
+
 @app.delete("/api/v1/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Документы и ИИ-распознавание"], summary="Удалить документ из архива")
 def delete_document(
     doc_id: int,
@@ -1480,68 +1553,6 @@ _PLACEHOLDER_KEYS = {
 }
 
 
-def _load_dotenv_files() -> None:
-    """Чтение переменных из .env / .env.local / .env.example без внешних зависимостей."""
-    base_dir = Path(__file__).resolve().parent
-    for filename in (".env", ".env.local", ".env.example"):
-        env_path = base_dir / filename
-        if not env_path.is_file():
-            continue
-        try:
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):].strip()
-                key, val = line.split("=", 1)
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if not key or val in _PLACEHOLDER_KEYS:
-                    continue
-                if not os.environ.get(key) or os.environ.get(key) in _PLACEHOLDER_KEYS:
-                    os.environ[key] = val
-        except OSError:
-            pass
-
-
-_load_dotenv_files()
-
-LLM_PROXY_URL = os.getenv("LLM_PROXY_URL", "https://llm-proxy.spirit.t-education.com")
-LLM_API_KEY = (
-    os.getenv("LLM_API_KEY")
-    or os.getenv("LLM_PROXY_API_KEY")
-    or os.getenv("API_KEY")
-    or os.getenv("SPIRIT_API_KEY")
-    or os.getenv("VISION_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or ""
-)
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-
-
-def _resolve_api_key() -> str:
-    """Возвращает очищенный API-ключ прокси (перечитывая .env при необходимости)."""
-    raw_key = LLM_API_KEY
-    if not raw_key or raw_key in _PLACEHOLDER_KEYS:
-        _load_dotenv_files()
-        raw_key = (
-            os.getenv("LLM_API_KEY")
-            or os.getenv("LLM_PROXY_API_KEY")
-            or os.getenv("API_KEY")
-            or os.getenv("SPIRIT_API_KEY")
-            or os.getenv("VISION_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or ""
-        )
-    cleaned = raw_key.strip().strip('"').strip("'")
-    if cleaned.lower().startswith("bearer "):
-        cleaned = cleaned[7:].strip()
-    if cleaned in _PLACEHOLDER_KEYS:
-        return ""
-    return cleaned
-
-
 from ocr import recognize_text, require_ocr_configuration
 
 
@@ -1554,23 +1565,12 @@ async def recognize_document(
     from features import enforce_quota, premium
     if not premium(current_user):
         raise HTTPException(403, "ИИ-распознавание доступно в платной версии. Запросите доступ у администратора.")
-    allowed_types = {"image/jpeg", "image/png", "image/webp"}
-    if file.content_type not in allowed_types:
-        raise HTTPException(415, "Поддерживаются JPG, PNG и WebP")
-
-    limit = 10 * 1024 * 1024
+    from uploads import checked_upload, MAX_FILE_BYTES
     try:
-        photo = await file.read(limit + 1)
+        photo = await file.read(MAX_FILE_BYTES + 1)
     finally:
         await file.close()
-
-    if not photo:
-        raise HTTPException(400, "Файл пуст")
-    valid = (file.content_type == "image/png" and photo.startswith(bytes.fromhex("89504e470d0a1a0a"))) or (file.content_type == "image/jpeg" and photo.startswith(bytes.fromhex("ffd8ff"))) or (file.content_type == "image/webp" and photo[:4] == b"RIFF" and photo[8:12] == b"WEBP")
-    if not valid:
-        raise HTTPException(415, "Содержимое файла не соответствует формату изображения")
-    if len(photo) > limit:
-        raise HTTPException(413, "Максимальный размер — 10 МБ")
+    checked_upload(photo, file.content_type)
 
     require_ocr_configuration()
     enforce_quota(db, "ocr-user:"+str(current_user.id)+":"+datetime.utcnow().strftime("%Y%m%d"), 10)

@@ -8,6 +8,9 @@ import uuid
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
+os.environ['APP_ENV'] = 'test'
+os.environ['ENFORCE_DB_PERMISSIONS'] = 'false'
+
 _tmp = tempfile.TemporaryDirectory(prefix='petcare-tests-')
 url = make_url(os.environ.get('TEST_DATABASE_URL') or 'sqlite:///' + str(Path(_tmp.name) / 'test.db'))
 if url.drivername in {'postgres', 'postgresql'}:

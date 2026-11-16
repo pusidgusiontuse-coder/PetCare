@@ -1,0 +1,20 @@
+[Unit]
+Description=PetCare encrypted offsite PostgreSQL backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=petcare-backup
+Group=petcare-backup
+EnvironmentFile=/etc/petcare/backup.env
+ExecStart=/opt/petcare/.venv/bin/python /opt/petcare/scripts/backup_ops.py backup
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=petcare-backup
+WorkingDirectory=/var/lib/petcare-backup
+Environment=RESTIC_CACHE_DIR=/var/lib/petcare-backup/cache
+TimeoutStartSec=2h

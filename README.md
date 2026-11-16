@@ -2,6 +2,8 @@
 
 Python/FastAPI + PostgreSQL + React/TypeScript (постепенный перенос интерфейса). Схема базы управляется Alembic.
 
+Базовая защита, отдельные роли БД и подготовка offsite backup: [docs/SECURITY.md](docs/SECURITY.md).
+
 ## Запуск и миграция
 
 Frontend: [структура React/TS, сборка и разработка](docs/FRONTEND.md). Для сборки нужен Node.js 22.12+.

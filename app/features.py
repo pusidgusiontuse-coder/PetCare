@@ -7,6 +7,7 @@ import re
 import secrets
 import smtplib
 import uuid
+import time
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -45,13 +46,17 @@ def send_email(address, subject, body):
 
 def normalize_email(value):
     value = value.strip().lower()
+    try: value.encode('utf-8')
+    except UnicodeError: raise ValueError('Введите корректную электронную почту') from None
     if len(value) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value):
         raise ValueError('Введите корректную электронную почту')
     return value
 
 
 def password_ok(value):
-    if len(value) < 8 or len(value.encode('utf8')) > 72:
+    try: length = len(value.encode('utf8'))
+    except UnicodeError: raise HTTPException(422, 'Пароль содержит недопустимые символы') from None
+    if len(value) < 8 or length > 72:
         raise HTTPException(422, 'Пароль: минимум 8 символов, максимум 72 байта.')
     return value
 
@@ -78,6 +83,10 @@ class Registration(BaseModel):
     @field_validator('email')
     @classmethod
     def valid_email(cls, value): return normalize_email(value)
+
+class LoginInput(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
 
 class ProfileChange(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -190,14 +199,19 @@ def install_features(app):
         return issue_code(db, data.email, 'register', payload={'full_name':data.full_name, 'hashed_password':get_password_hash(data.password), 'timezone':data.timezone})
 
     @router.post('/auth/login')
-    def login(data: Registration | dict, request: Request, db=Depends(get_db)):
-        # Generic dict supports the existing email/password login form.
-        values = data if isinstance(data,dict) else data.model_dump()
+    def login(data: LoginInput, request: Request, db=Depends(get_db)):
+        values = data.model_dump()
         enforce_quota(db, 'login:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 60)
         try: email=normalize_email('admin@petcare.local' if str(values.get('email','')).strip().lower()==os.getenv('ADMIN_LOGIN','petcare-admin') else str(values.get('email','')))
         except ValueError: raise HTTPException(401,'Неверная почта или пароль')
+        account_key = hmac.new(SECRET_KEY.encode(), email.encode(), hashlib.sha256).hexdigest()
+        window = str(int(time.time()) // 900)
+        enforce_quota(db, 'login-account:'+account_key+':'+window, 10)
         u=db.query(models.User).filter(models.User.email==email).first()
-        if not u or u.disabled or (email in ('demo1@petcare.app','demo2@petcare.app','demo1@petcare.local','demo2@petcare.local')) or not verify_password(str(values.get('password','')),u.hashed_password):
+        # Equal-cost password check for unknown users, without account-specific errors.
+        from auth import DUMMY_PASSWORD_HASH
+        password_valid = verify_password(values['password'], u.hashed_password if u else DUMMY_PASSWORD_HASH)
+        if not u or u.disabled or (email in ('demo1@petcare.app','demo2@petcare.app','demo1@petcare.local','demo2@petcare.local')) or not password_valid:
             raise HTTPException(401,'Неверная почта или пароль')
         return {'access_token':create_access_token({'sub':str(u.id)}, device=request.headers.get('user-agent','Браузер')[:200]),'token_type':'bearer','user':user_json(u)}
 

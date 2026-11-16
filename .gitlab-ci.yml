@@ -27,5 +27,7 @@ test:
     TEST_DATABASE_URL: 'postgresql+psycopg://petcare:ci-only-password@postgres:5432/petcare_test'
     ENABLE_DEMO_LOGIN: 'true'
   script:
+    - apt-get update && apt-get install -y git postgresql-client restic
     - pip install -r app/requirements.txt
-    - python -m pytest app/test_security_features.py app/test_main.py app/test_database_migration.py -q
+    - python scripts/check_secrets.py
+    - python -m pytest app -q

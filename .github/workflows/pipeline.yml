@@ -25,6 +25,7 @@ jobs:
     env:
       SECRET_KEY: ci-only-key-at-least-32-characters-do-not-use-in-production
       DATABASE_URL: postgresql+psycopg://petcare:ci-only-password@127.0.0.1:5432/petcare_test
+      PETCARE_REQUIRE_BACKUP_TESTS: 'true'
       TEST_DATABASE_URL: postgresql+psycopg://petcare:ci-only-password@127.0.0.1:5432/petcare_test
       ENABLE_DEMO_LOGIN: 'true'
     steps:
@@ -45,10 +46,19 @@ jobs:
           cache: pip
           cache-dependency-path: app/requirements.txt
       - run: python -m pip install -r app/requirements.txt
+      - name: Install backup verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y restic
+          if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            sudo apt-get install -y postgresql-client-17
+          fi
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - run: python scripts/check_secrets.py
       - run: python -m pip check
-      - run: python -m compileall -q app
+      - run: python -m compileall -q app scripts migrations backup.py
       - run: python -m alembic upgrade head
-      - run: python -m pytest app/test_security_features.py app/test_main.py app/test_database_migration.py -q --junitxml=reports/pytest.xml
+      - run: python -m pytest app -q --junitxml=reports/pytest.xml
       - run: python -m alembic check
       - uses: actions/upload-artifact@v4
         if: always()
@@ -110,6 +120,7 @@ jobs:
           python tests/wheels_browser.py
           python tests/usability_browser.py
           python tests/hierarchy_browser.py
+          python tests/security_browser.py
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-build

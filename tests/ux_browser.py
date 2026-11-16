@@ -20,7 +20,7 @@ with sync_playwright() as playwright:
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(BASE)
         page.wait_for_load_state('networkidle')
-        page.wait_for_function('state.pets.length > 0')
+        page.wait_for_function('() => state.pets.length > 0')
         page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
         page.evaluate("""() => {
             state.selected = state.pets[0].id;

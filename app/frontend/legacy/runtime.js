@@ -813,7 +813,7 @@ const f = { date: n => field(n, 'Дата', 'date', { required: true }), notes: 
 
 function petProfileFields(p) {
   const shareBlock = p?.shareCode
-    ? '<div class="field wide-mobile"><label>Код совместного ухода</label><div class="join-input-group" style="margin-top:8px"><input type="text" aria-label="Код совместного ухода" value="' + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать</button></div></div>'
+    ? '<div class="field wide-mobile"><label>Код совместного ухода</label><div class="join-input-group" style="margin-top:8px"><input type="text" aria-label="Код совместного ухода" value="' + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + '">Скопировать</button></div></div>'
     : '';
   return field('name', 'Имя', 'text', { required: true }) +
     field('species', 'Вид', 'text', { required: true, placeholder: 'Кошка, собака…' }) +
@@ -1551,7 +1551,7 @@ function renderProfile() {
     const coOwners = Array.isArray(p.coOwners) ? p.coOwners : [];
     const localMembers = state.members.filter(m => isForPet(m, p));
     const shareCodeHtml = p.shareCode
-      ? '<div class="record" style="padding-top:4px"><div class="small" style="margin-bottom:6px">Код совместного ухода за <b>' + esc(p.name) + '</b> (передайте члену семьи):</div><div class="join-input-group"><input type="text" aria-label="Код совместного ухода" readonly value="' + esc(p.shareCode) + '"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать код</button></div></div>'
+      ? '<div class="record" style="padding-top:4px"><div class="small" style="margin-bottom:6px">Код совместного ухода за <b>' + esc(p.name) + '</b> (передайте члену семьи):</div><div class="join-input-group"><input type="text" aria-label="Код совместного ухода" readonly value="' + esc(p.shareCode) + '"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + '">Скопировать код</button></div></div>'
       : '';
     const joinQuickHtml = '<div class="record"><div class="small" style="margin-bottom:6px">Подключиться к другому питомцу по коду:</div><div class="join-input-group"><input type="text" id="profile-join-code" placeholder="Например: PET-REXX-3F88-P9D1"><button type="button" class="btn tiny primary" id="profile-join-btn">Подключиться</button></div></div>';
 
@@ -1640,7 +1640,7 @@ function renderDetails() {
     ['Номер чипа', p.chip]
   ];
   const shareHtml = p.shareCode
-    ? '<div class="profile-fact-wide"><dt>Код совместного ухода</dt><dd><button type="button" class="pet-card-code" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')"><code>' + esc(p.shareCode) + '</code><span class="copy-label">скопировать код</span></button></dd></div>'
+    ? '<div class="profile-fact-wide"><dt>Код совместного ухода</dt><dd><button type="button" class="pet-card-code" data-copy-pet-code="' + esc(p.shareCode) + '"><code>' + esc(p.shareCode) + '</code><span class="copy-label">скопировать код</span></button></dd></div>'
     : '';
   $('editor-fields').innerHTML =
     '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(p.species) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? ' · Совместный уход' : '') + '</p></div></div>' +
@@ -3547,3 +3547,8 @@ if (window.__PETCARE_TEST__ === true) {
     installPrompt: { get: () => installPrompt, set: value => { installPrompt = value; } },
   });
 }
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-copy-pet-code]');
+  if (button) window.copyPetCode(button.dataset.copyPetCode);
+});

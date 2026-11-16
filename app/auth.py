@@ -12,6 +12,7 @@ import models
 
 from settings import SECRET_KEY
 ALGORITHM = "HS256"
+DUMMY_PASSWORD_HASH = bcrypt.hashpw(b'not-an-account-password', bcrypt.gensalt()).decode()
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 дней
 
 security = HTTPBearer()
@@ -22,7 +23,10 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if not plain_password or not isinstance(hashed_password, str):
+    try:
+        if not plain_password or len(plain_password.encode('utf-8')) > 72 or not isinstance(hashed_password, str):
+            return False
+    except (UnicodeError, AttributeError):
         return False
     if not re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}", hashed_password):
         return False

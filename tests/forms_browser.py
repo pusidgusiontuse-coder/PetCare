@@ -17,7 +17,7 @@ with sync_playwright() as p:
         page.on('request', lambda request: friends_requests.append(request.url) if '/match-' in request.url else None)
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(BASE); page.wait_for_load_state('networkidle')
-        page.wait_for_function('state.pets.length > 0')
+        page.wait_for_function('() => state.pets.length > 0')
         page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
         for kind in ('pet','pet-edit','health','prescription','weight','activity'):
             page.evaluate('(kind) => openModal(kind)', kind)

@@ -12,7 +12,7 @@ with sync_playwright() as p:
         context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(result.json()['access_token'])+')')
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-        page.goto(BASE);page.wait_for_load_state('networkidle');page.wait_for_function('state.pets.length > 0')
+        page.goto(BASE);page.wait_for_load_state('networkidle');page.wait_for_function('() => state.pets.length > 0')
         page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
         page.evaluate("openExtraModal('reminder')")
         source=page.locator('#editor [name=at]');original=source.input_value()
@@ -42,7 +42,7 @@ with sync_playwright() as p:
             page.evaluate('new Promise(resolve => requestAnimationFrame(resolve))')
         cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]})
         try:
-            page.wait_for_function("Number(document.getElementById('picker-hour').value)>14",timeout=5000)
+            page.wait_for_function("() => Number(document.getElementById('picker-hour').value)>14",timeout=5000)
         except Exception:
             Path('reports/ui').mkdir(parents=True,exist_ok=True)
             page.screenshot(path=f'reports/ui/time-wheel-{width}.png',full_page=True)
@@ -58,7 +58,7 @@ with sync_playwright() as p:
         expect(page.locator('#picker-hour')).to_have_value('23')
         # Native mouse-wheel scrolling, not only programmatic scrolling.
         hours.hover();page.mouse.wheel(0,-132)
-        page.wait_for_function("Number(document.getElementById('picker-hour').value)<23")
+        page.wait_for_function("() => Number(document.getElementById('picker-hour').value)<23")
         page.locator('[data-preset-time="19:00"]').click()
         expect(hours.locator('[aria-selected=true]')).to_have_text('19')
         expect(minutes.locator('[aria-selected=true]')).to_have_text('00')

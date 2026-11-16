@@ -15,7 +15,8 @@ from sqlalchemy import Boolean, Column, MetaData, Table, create_engine, func, in
 from sqlalchemy.engine import URL
 
 import models
-from database import engine
+from connection_config import validate_url
+from dotenv import load_dotenv
 from schema import check_schema
 
 
@@ -104,7 +105,15 @@ def copy_snapshot(snapshot, destination):
         source_engine.dispose()
 
 
-def transfer(source_path, destination=engine):
+def transfer(source_path, destination=None):
+    if destination is None:
+        load_dotenv(os.environ.get('PETCARE_ENV_FILE', Path(__file__).resolve().parent / '.env'))
+        url = os.environ.get('MIGRATION_DATABASE_URL') or os.environ.get('DATABASE_URL')
+        if not url or os.getenv('APP_ENV') == 'production' and not os.environ.get('MIGRATION_DATABASE_URL'):
+            raise TransferError('Use a separate migration environment with MIGRATION_DATABASE_URL')
+        migration_engine = create_engine(validate_url(url, os.getenv('APP_ENV') == 'production'), hide_parameters=True)
+        try: return transfer(source_path, migration_engine)
+        finally: migration_engine.dispose()
     if destination.dialect.name != 'postgresql':
         raise TransferError('Destination must be PostgreSQL')
     source_path = Path(source_path).expanduser().resolve(strict=True)

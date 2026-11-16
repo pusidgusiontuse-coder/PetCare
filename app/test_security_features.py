@@ -158,7 +158,7 @@ def test_missing_ocr_configuration_does_not_consume_quota(client, monkeypatch):
         before = db.query(models.RequestQuota).count()
     for _ in range(2):
         response = client.post('/api/v1/documents/recognize', headers=headers,
-                               files={'file': ('document.png', b'\x89PNG\r\n\x1a\n', 'image/png')})
+                               files={'file': ('document.png', valid_image(), 'image/png')})
         assert response.status_code == 503
         assert 'Google AI Studio' in response.json()['detail']
     with SessionLocal() as db:
@@ -306,3 +306,9 @@ def test_delete_account_with_legacy_match_profile(client,mail):
         assert db.get(models.User,owner[0]) is None
         assert db.get(models.MatchProfile,profile_id) is None
         assert db.get(models.Pet,p['id']) is not None
+
+
+def valid_image():
+    from io import BytesIO
+    from PIL import Image
+    data=BytesIO();Image.new('RGB',(2,2)).save(data,format='PNG');return data.getvalue()

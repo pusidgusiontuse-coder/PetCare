@@ -1,5 +1,7 @@
 # PostgreSQL: запуск и перенос SQLite
 
+Для production сначала настройте отдельные роли приложения/миграций/backup и сеть по [SECURITY.md](SECURITY.md). Команды Alembic и SQLite-импорта выполняйте с `PETCARE_ENV_FILE=/etc/petcare/migration.env`; runtime использует другой приватный файл.
+
 Основная БД PetCare — PostgreSQL 17+. Python работает через SQLAlchemy и psycopg 3. Схема версионируется Alembic; веб-процессы не создают и не изменяют таблицы. SQLite оставлен для чтения при переносе и быстрых локальных тестов. Автоматического переключения на пустой SQLite больше нет.
 
 ## Новый локальный экземпляр
@@ -71,7 +73,7 @@ python -m alembic check
 
 ## Резервные копии и восстановление
 
-`backup.py` теперь делает PostgreSQL backup в custom format. Нужен установленный `pg_dump` той же основной версии, что сервер, или новее. Пароль передаётся через временный приватный service-файл, не через аргументы процесса:
+`backup.py` использует `BACKUP_DATABASE_URL` отдельной read-only роли (в development сохранён fallback на DATABASE_URL) и делает PostgreSQL backup в custom format. Нужен установленный `pg_dump` той же основной версии, что сервер, или новее. Пароль передаётся через временный приватный service-файл, не через аргументы процесса:
 
 ```sh
 python backup.py /PRIVATE/BACKUPS/petcare.dump

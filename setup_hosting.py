@@ -29,11 +29,13 @@ if dispatcher.exists() and public != ROOT / 'public' and not args.upgrade:
 venv.EnvBuilder(with_pip=True).create(ROOT / '.venv')
 python = ROOT / '.venv' / 'bin' / 'python'
 subprocess.run([str(python), '-m', 'pip', 'install', '-r', str(ROOT / 'app' / 'requirements.txt')], check=True)
-private_env = ROOT / 'app' / '.env'
+private_env = Path(os.environ.get('PETCARE_ENV_FILE', ROOT / 'app' / '.env')).expanduser().resolve()
+if private_env == public or public in private_env.parents:
+    raise SystemExit('Private environment must be OUTSIDE the public website directory.')
 if not private_env.exists():
     fd = os.open(private_env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w') as f:
-        f.write('DATABASE_URL=\nSECRET_KEY=' + secrets.token_urlsafe(48) + '\nENABLE_DEMO_LOGIN=false\nLLM_API_KEY=\n')
+        f.write('APP_ENV=production\nALLOWED_HOSTS=\nDATABASE_URL=\nSECRET_KEY=' + secrets.token_urlsafe(48) + '\nENABLE_DEMO_LOGIN=false\nLLM_API_KEY=\n')
 (ROOT / 'data').mkdir(mode=0o700, exist_ok=True)
 # Schema/data migration and PostgreSQL backup are explicit deployment steps.
 # Never create an empty SQLite replacement for an existing installation.
@@ -45,13 +47,17 @@ if 'VAPID_PRIVATE_KEY=' not in private_env.read_text():
     secret,pub=json.loads(result.stdout)
     with private_env.open('a') as f: f.write('VAPID_PRIVATE_KEY='+secret+'\nVAPID_PUBLIC_KEY='+pub+'\n')
 
-subprocess.run([str(python), '-m', 'alembic', 'upgrade', 'head'], cwd=ROOT, check=True)
+migration_env = dict(os.environ)
+if os.getenv('PETCARE_MIGRATION_ENV_FILE'):
+    migration_env['PETCARE_ENV_FILE'] = os.environ['PETCARE_MIGRATION_ENV_FILE']
+subprocess.run([str(python), '-m', 'alembic', 'upgrade', 'head'], cwd=ROOT, env=migration_env, check=True)
 subprocess.run([str(python), '-c', 'import main; print("PetCare imports successfully")'], cwd=ROOT / 'app', check=True)
 code = f'''import os
 import sys
 INTERP = {str(python)!r}
 if sys.executable != INTERP:
     os.execl(INTERP, INTERP, *sys.argv)
+os.environ.setdefault('PETCARE_ENV_FILE', {str(private_env)!r})
 sys.path.insert(0, {str(ROOT / 'app')!r})
 from a2wsgi import ASGIMiddleware
 from main import app

@@ -7,6 +7,7 @@ npm ci
 npm run lint
 npm test
 npm run build
+python scripts/check_secrets.py
 python -m pip check
 python -m compileall -q app
 # TEST_DATABASE_URL must point to a disposable PostgreSQL database.
@@ -15,5 +16,5 @@ export SECRET_KEY='ci-only-key-at-least-32-characters-do-not-use-in-production'
 export DATABASE_URL="$TEST_DATABASE_URL"
 export ENABLE_DEMO_LOGIN=true
 python -m alembic upgrade head
-python -m pytest app/test_security_features.py app/test_main.py app/test_database_migration.py -q
+python -m pytest app -q
 python -m alembic check
