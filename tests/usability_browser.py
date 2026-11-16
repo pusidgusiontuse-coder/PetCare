@@ -13,6 +13,12 @@ with sync_playwright() as p:
     page=context.new_page(); errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
     page.goto(BASE); page.wait_for_load_state('networkidle');page.wait_for_function('state.pets.length > 0')
+    page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
+    snapshot=page.evaluate('''async () => {
+        await Promise.all([syncServerData(true),syncServerData(true),syncServerData(true)]);
+        return {count:state.health.length,unique:new Set(state.health.map(record=>record.id)).size};
+    }''')
+    assert snapshot['count']==snapshot['unique'] and snapshot['unique']>0, snapshot
     for width in (320,375,812,1023):
         page.set_viewport_size({'width':width,'height':812})
         page.evaluate("show('pets')")

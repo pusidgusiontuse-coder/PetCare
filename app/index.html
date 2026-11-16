@@ -805,7 +805,16 @@ function logActivity(petId, action, icon = 'ðŸ¾', actor = state.user.name || 'Ð
 // =====================================================================
 // 3. BACKEND SYNCHRONIZATION (syncServerData)
 // =====================================================================
-async function syncServerData(silent = false) {
+// Queue explicit refreshes: parallel responses must not append into shared arrays.
+let syncTail = Promise.resolve(), syncPending = 0;
+function syncServerData(silent = false) {
+  syncPending += 1;
+  const request = syncTail.then(() => loadServerData(silent));
+  syncTail = request.catch(() => {});
+  return request.finally(() => { syncPending -= 1; });
+}
+
+async function loadServerData(silent = false) {
   try {
     if (!authToken) {
       updateAuthStatusUI();
@@ -3182,6 +3191,7 @@ $('api-logout').onclick = async () => {
 
 // Automatic background sync on window focus / visibility change / interval
 function canAutoSync() {
+  if (syncPending > 0) return false;
   if (!authToken || document.hidden) return false;
   if ($('editor')?.open || $('auth-dialog')?.open || $('security-dialog')?.open || $('temporal-picker')?.open) return false;
   if ($('health-pet-form')?.dataset.dirty === 'true') return false;

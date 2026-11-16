@@ -17,6 +17,7 @@ with sync_playwright() as p:
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(BASE); page.wait_for_load_state('networkidle')
         page.wait_for_function('state.pets.length > 0')
+        page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
         for kind in ('pet','pet-edit','health','prescription','weight','activity'):
             page.evaluate('(kind) => openModal(kind)', kind)
             expect(page.locator('#editor')).to_be_visible()
