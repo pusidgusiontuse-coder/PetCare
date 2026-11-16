@@ -62,3 +62,4 @@ jobs:
           done
           $ready
           python tests/ux_browser.py
+          python tests/forms_browser.py

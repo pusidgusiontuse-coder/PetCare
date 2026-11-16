@@ -39,11 +39,11 @@
       <div class="pet-account-panel" id="pet-account-panel" role="region" aria-label="Переключение аккаунтов питомцев" hidden><p class="account-panel-title">Ваши питомцы</p><div id="pet-account-list"></div><button class="account-add" id="account-add" type="button">+ Добавить питомца</button></div>
     </div>
     <nav class="nav" aria-label="Разделы кабинета">
-      <a href="#pets" data-page="pets" class="mobile-pets" aria-label="Питомцы"><svg aria-hidden="true"><use href="#paw"/></svg><span class="nav-label">Питомцы</span></a>
       <a href="#health" data-page="health" aria-label="Здоровье"><svg aria-hidden="true"><use href="#heart"/></svg><span class="nav-label">Здоровье</span></a>
       <a href="#nutrition" data-page="nutrition" aria-label="Питание"><svg aria-hidden="true"><use href="#food"/></svg><span class="nav-label">Питание</span></a>
+      <a href="#pets" data-page="pets" class="mobile-pets" aria-label="Питомцы"><svg aria-hidden="true"><use href="#paw"/></svg><span class="nav-label">Питомцы</span></a>
       <a href="#care" data-page="care" aria-label="Уход и события"><svg aria-hidden="true"><use href="#clock"/></svg><span class="nav-label" data-mobile="Уход">Уход и события</span></a>
-      <a href="#documents" data-page="documents" aria-label="Документы"><svg aria-hidden="true"><use href="#folder"/></svg><span class="nav-label">Документы</span></a>
+      <a href="#documents" data-page="documents" aria-label="Документы"><svg aria-hidden="true"><use href="#folder"/></svg><span class="nav-label" data-mobile="Файлы">Документы</span></a>
       <a href="#match" data-page="match" aria-label="Поиск друзей"><svg aria-hidden="true"><use href="#spark"/></svg><span class="nav-label" data-mobile="Друзья">Поиск друзей</span><span id="match-nav-badge" class="nav-badge" hidden>0</span></a>
     </nav>
     <div class="sidebar-bottom">
@@ -570,10 +570,11 @@
       <button type="button" class="picker-icon" id="picker-next" aria-label="Следующий месяц"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m10 6 6 6-6 6"/></svg></button>
     </div>
     <p class="picker-sr" id="picker-month-announcement" aria-live="polite"></p>
+    <label class="field picker-direct-field" for="picker-direct">Дата вручную<input id="picker-direct" type="text" inputmode="numeric" placeholder="ДД.ММ.ГГГГ" maxlength="10" aria-describedby="picker-direct-hint"><small id="picker-direct-hint">Например, 25.12.2026. Или выберите день в календаре.</small></label>
     <div id="picker-calendar" role="grid" aria-label="Календарь"></div>
     <div class="picker-shortcuts">
       <button type="button" class="btn" data-relative-day="0">Сегодня</button>
-      <button type="button" class="btn" data-relative-day="1">Завтра</button>
+      <button type="button" class="btn" data-relative-day="1">Завтра</button><button type="button" class="btn" data-relative-day="7">Через неделю</button>
     </div>
   </div>
   <div id="picker-time-panel" role="tabpanel" aria-labelledby="picker-time-tab" hidden>
@@ -2329,6 +2330,40 @@ function renderDetails() {
   });
 }
 
+function decorateEditor(type) {
+  if (type === 'nutrition' || type === 'pet-details') return;
+  const root = $('editor-fields');
+  const groups = {
+    pet: [['О питомце',['name','species','breed','birthDate','sex','sterilized']],['Особенности и фото',['marks','notes','chip','photo']]],
+    'pet-edit': [['О питомце',['name','species','breed','birthDate','sex','sterilized']],['Особенности и фото',['marks','notes','chip','photo']]],
+    health: [['Запись',['petId','type','title','date']],['Подробности приёма',['product','clinic','doctor','result','notes','attachment']],['Следующая процедура',['nextDate','repeatDays','nextTime']]],
+    prescription: [['Назначение врача',['name','dose']],['Курс и приём',['startDate','duration','times','status']]],
+    reminder: [['Событие',['petId','title','type']],['Когда напомнить',['at','frequency','interval']]],
+    'meal-plan': [['Рацион',['food']],['Расписание',['time','endTime','notes']]],
+    document: [['О документе',['title','type','date']],['Файл',['file']]],
+    'feeding-log': [['Кормление',['food','amount','at']],['Заметка',['notes']]],
+    profile: [['Личные данные',['name','email']],['Время',['timezone']]],
+    member: [['Совместный уход',['email','role','until']]],
+    avatar: [['Оформление',['background','accessory','photo']]],
+    settings: [['Тихие часы',['quietEnabled','quietStart','quietEnd']]],
+    shopping: [['Покупка',['title','quantity']]],
+    weight: [['Измерение',['date','kg']]],
+    move: [['Новое время',['at']]],
+    activity: [['Действие',['action','actor','at']]],
+    'vet-contact': [['Контакты клиники',['clinicUrl','doctor']]]
+  }[type] || [];
+  for (const [index, [title, names]] of groups.entries()) {
+    const fields = names.map(name => root.querySelector('[name="' + name + '"]')?.closest('.field')).filter(Boolean);
+    if (!fields.length) continue;
+    const section = document.createElement('section'); section.className = 'editor-section full';
+    const heading = document.createElement('h3'); heading.textContent = title;
+    heading.id = 'editor-section-' + index; section.setAttribute('aria-labelledby', heading.id);
+    const grid = document.createElement('div'); grid.className = 'form-grid';
+    // Insert at the first original field to preserve DOM and keyboard order.
+    fields[0].before(section); section.append(heading, grid); fields.forEach(field => grid.append(field));
+  }
+}
+
 function openModal(type, id) {
   $('editor').dataset.mode = type;
   $('editor-form').querySelector('[type=submit]').textContent = type === 'nutrition' ? 'Сохранить корм' : 'Сохранить';
@@ -2420,7 +2455,7 @@ function openModal(type, id) {
       </div></details>`;
   }
 
-  if (type !== 'pet-details') $('editor-fields').innerHTML = html;
+  if (type !== 'pet-details') { $('editor-fields').innerHTML = html; decorateEditor(type); }
   $('editor-title').textContent = title;
   $('editor-context').textContent = type === 'pet' ? 'Создайте карточку питомца или подключитесь по коду совместного доступа.' : ('Кабинет: ' + (p?.name || 'Питомец'));
 
@@ -2497,7 +2532,7 @@ function openExtraModal(type) {
       '<p class="hint meal-form-hint"><span class="meal-range-hint" hidden>Интервал задаётся в пределах одного дня. </span>Повторяется ежедневно и синхронизируется с сервером.</p>';
     $('editor-title').textContent = title;
     $('editor-context').textContent = 'Кабинет: ' + p.name;
-    $('editor-fields').innerHTML = html;
+    $('editor-fields').innerHTML = html; decorateEditor(type);
     const fields = $('editor-fields'), start = fields.querySelector('[name=time]'), end = fields.querySelector('[name=endTime]');
     start.value = '08:30';
     const updateTiming = () => {
@@ -2565,7 +2600,7 @@ function openExtraModal(type) {
 
   $('editor-title').textContent = title;
   $('editor-context').textContent = ['profile', 'settings'].includes(type) ? 'Настройки владельца' : ('Кабинет: ' + (p?.name || 'Питомец'));
-  $('editor-fields').innerHTML = html;
+  $('editor-fields').innerHTML = html; decorateEditor(type);
   $('editor-form').querySelector('.form-actions').style.display = 'flex';
 
   const form = $('editor-form');
@@ -3217,9 +3252,11 @@ setInterval(() => {
   const error = message => { get('error').textContent = message; get('error').hidden = !message; };
   function updatePreview() {
     const clock = pad(draft.hour) + ':' + pad(draft.minute);
+    get('direct').value = draft.day.split('-').reverse().join('.');
     get('preview').textContent = source.type === 'time' ? clock : fullDate.format(readDay(draft.day)) + (source.type === 'datetime-local' ? ', ' + clock : '');
   }
   function renderCalendar(focusDay) {
+    get('prev').disabled = viewYear === 1 && viewMonth === 0; get('next').disabled = viewYear === 9999 && viewMonth === 11;
     get('month').value = String(viewMonth);
     get('year').value = viewYear;
     get('month-announcement').textContent = monthDate.format(civil(viewYear, viewMonth, 1));
@@ -3243,11 +3280,13 @@ setInterval(() => {
     if (focusDay) get('calendar').querySelector('[data-day="' + tabDay + '"]')?.focus();
   }
   function showStage(next, focus = false) {
+    if (picker.open && stage === 'date' && next === 'time' && get('direct').value !== draft.day.split('-').reverse().join('.') && !get('direct').onchange()) return;
     stage = next;
     const combined = source.type === 'datetime-local';
     get('tabs').hidden = !combined;
     get('date-panel').hidden = stage !== 'date';
     get('time-panel').hidden = stage !== 'time';
+    get('date-tab').tabIndex = stage === 'date' ? 0 : -1; get('time-tab').tabIndex = stage === 'time' ? 0 : -1;
     get('date-tab').setAttribute('aria-selected', String(stage === 'date'));
     get('time-tab').setAttribute('aria-selected', String(stage === 'time'));
     get('apply').textContent = combined && stage === 'date' ? 'Далее: время' : source.type === 'date' ? 'Выбрать дату' : 'Готово';
@@ -3272,12 +3311,15 @@ setInterval(() => {
     get('context').textContent = label;
     get('title').textContent = input.type === 'time' ? 'Выбрать время' : input.type === 'date' ? 'Выбрать дату' : 'Дата и время';
     get('clear').hidden = input.required;
+    picker.querySelectorAll('[data-relative-day]').forEach(button => button.disabled = !isDateAllowed(relativeDay(Number(button.dataset.relativeDay))));
     renderCalendar(); showStage(input.type === 'time' ? 'time' : 'date');
     picker.showModal(); showStage(stage, true);
   }
-  function close() { picker.close(); }
+  function close() { picker.close(); source?.focus({preventScroll:true}); }
   get('close').onclick = close; get('cancel').onclick = close;
   function commit(value) {
+    const check = source.cloneNode(); check.value = value;
+    if (check.value !== value || !check.checkValidity()) { error('Выберите допустимые дату и время: проверьте ограничения поля.'); return; }
     source.value = value;
     source.dispatchEvent(new Event('input', { bubbles: true }));
     source.dispatchEvent(new Event('change', { bubbles: true }));
@@ -3285,7 +3327,10 @@ setInterval(() => {
   }
   get('clear').onclick = () => commit('');
   get('apply').onclick = () => {
+    if (stage === 'date' && (!get('year').checkValidity() || !get('year').value)) { error('Год должен быть от 1 до 9999.'); return; }
+    if (stage === 'date' && get('direct').value !== draft.day.split('-').reverse().join('.') && !get('direct').onchange()) return;
     if (stage === 'date' && source.type === 'datetime-local') { showStage('time', true); return; }
+    if (source.type !== 'date' && (!get('hour').checkValidity() || !get('minute').checkValidity() || get('hour').value === '' || get('minute').value === '')) { error('Укажите часы от 0 до 23 и минуты от 0 до 59.'); return; }
     draft.hour = Number(get('hour').value) || 0;
     draft.minute = Number(get('minute').value) || 0;
     const clock = pad(draft.hour) + ':' + pad(draft.minute);
@@ -3312,14 +3357,37 @@ setInterval(() => {
     }
   };
   picker.querySelectorAll('[data-relative-day]').forEach(button => button.onclick = () => {
+    if (!isDateAllowed(relativeDay(Number(button.dataset.relativeDay)))) return;
     draft.day = relativeDay(Number(button.dataset.relativeDay));
     const d = readDay(draft.day); viewYear = d.getFullYear(); viewMonth = d.getMonth();
     renderCalendar(draft.day); updatePreview();
   });
+  get('direct').onchange = () => {
+    const match = get('direct').value.trim().match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})$/);
+    const key = match ? match[3] + '-' + match[2] + '-' + match[1] : '';
+    if (!match || !isDateAllowed(key) || dayKey(readDay(key)) !== key) { error('Введите существующую дату в формате ДД.ММ.ГГГГ.'); return false; }
+    if (draft.day === key) { error(''); return true; }
+    draft.day = key; const d = readDay(key); viewYear = d.getFullYear(); viewMonth = d.getMonth(); renderCalendar(); updatePreview(); error(''); return true;
+  };
+  get('direct').oninput = () => { if (get('direct').value.trim().length === 10) get('direct').onchange(); };
+  get('direct').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); get('direct').onchange(); } };
+  for (const part of ['hour','minute']) get(part).oninput = () => {
+    if (get('hour').checkValidity() && get('minute').checkValidity()) {
+      draft.hour = Number(get('hour').value); draft.minute = Number(get('minute').value); updatePreview(); error('');
+    }
+  };
+  get('calendar').onkeydown = e => {
+    const cell = e.target.closest('[data-day]'); if (!cell) return;
+    const delta = {ArrowLeft:-1, ArrowRight:1, ArrowUp:-7, ArrowDown:7}[e.key];
+    if (delta === undefined) return; e.preventDefault();
+    const day = readDay(cell.dataset.day); day.setDate(day.getDate() + delta); const key = dayKey(day);
+    if (!isDateAllowed(key)) return; viewYear = day.getFullYear(); viewMonth = day.getMonth(); renderCalendar(key);
+  };
+  get('tabs').onkeydown = e => { if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return; e.preventDefault(); showStage(stage === 'date' ? 'time' : 'date'); get(stage + '-tab').focus(); };
   get('prev').onclick = () => { const t = civil(viewYear, viewMonth - 1, 1); viewYear = t.getFullYear(); viewMonth = t.getMonth(); renderCalendar(); };
   get('next').onclick = () => { const t = civil(viewYear, viewMonth + 1, 1); viewYear = t.getFullYear(); viewMonth = t.getMonth(); renderCalendar(); };
   get('month').onchange = () => { viewMonth = Number(get('month').value); renderCalendar(); };
-  get('year').onchange = () => { viewYear = Number(get('year').value) || viewYear; renderCalendar(); };
+  get('year').onchange = () => { if (!get('year').checkValidity() || !get('year').value) { error('Год должен быть от 1 до 9999.'); return; } viewYear = Number(get('year').value); renderCalendar(); error(''); };
   get('date-tab').onclick = () => showStage('date');
   get('time-tab').onclick = () => showStage('time');
 
@@ -3331,6 +3399,7 @@ setInterval(() => {
   new MutationObserver(changes => {
     for (const change of changes) for (const node of change.addedNodes) if (node.nodeType === 1) enhance(node);
   }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('keydown', event => { if (event.target.matches(selector) && ['Enter',' '].includes(event.key)) { event.preventDefault(); open(event.target); } });
   document.addEventListener('pointerdown', event => {
     if (event.button === 0 && event.target.matches(selector) && !event.target.disabled && !event.target.readOnly) {
       event.preventDefault(); open(event.target);

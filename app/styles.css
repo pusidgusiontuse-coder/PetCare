@@ -4680,3 +4680,49 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid
 .nutrition-actions .btn { min-height:44px; }
 @media(max-width:600px) { .nutrition-actions { width:100%; flex-wrap:wrap; } .nutrition-actions .btn { flex:1; } }
 #editor[data-mode="nutrition"] #editor-fields > .full { grid-column:1 / -1; }
+
+/* Shared form system: grouped fields, readable controls and stable actions. */
+#editor { width:min(660px,calc(100% - 24px)); padding:28px; background:var(--surface); }
+#editor #editor-title { font-size:26px; padding-right:36px; line-height:1.25; }
+#editor #editor-context { margin-bottom:24px; color:var(--muted); line-height:1.5; }
+#editor-fields > .full { grid-column:1 / -1; }
+.editor-section { min-width:0; padding:20px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.editor-section h3 { font-size:16px; margin:0 0 18px; }
+:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field { font-size:14px; font-weight:600; gap:8px; }
+:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { min-height:48px; font-size:16px; border-radius:12px; padding:12px 14px; background:var(--surface); }
+:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field textarea { min-height:96px; line-height:1.5; resize:vertical; }
+#editor .form-actions { position:sticky; bottom:-28px; margin:0 -28px -28px; padding:20px 28px; background:var(--surface); z-index:2; }
+#editor .form-actions .btn, #security-form .btn { min-height:48px; }
+#editor .meal-schedule-field { grid-column:1/-1; }
+#security-form { padding:4px; border:0; box-shadow:none; background:transparent; }
+#security-form h2 { margin-top:8px; }
+#security-form .field { margin-block:18px; }
+#security-form .row { flex-wrap:wrap; gap:10px; }
+#auth-dialog { background:var(--surface); }
+#temporal-picker { width:min(470px,calc(100% - 24px)); background:var(--surface); padding:24px; }
+.picker-direct-field { margin:16px 0; }
+.picker-direct-field input { font-size:16px; min-height:48px; }
+.picker-direct-field small { font-size:12px; font-weight:400; color:var(--muted); line-height:1.5; }
+#picker-calendar .calendar-day { min-height:44px; border-radius:12px; }
+.picker-shortcuts { flex-wrap:wrap; gap:8px; }
+.picker-shortcuts .btn { min-height:44px; }
+#temporal-picker .picker-actions { position:sticky; bottom:-24px; background:var(--surface); padding:16px 0; z-index:2; }
+#temporal-picker .picker-actions .btn { min-height:44px; }
+#picker-preview { background:var(--soft); border-radius:12px; padding:14px; font-weight:600; }
+@media(max-width:600px) {
+  #editor { padding:20px; max-height:calc(100dvh - 24px); }
+  #editor .form-actions { bottom:-20px; margin:0 -20px -20px; padding:16px 20px max(16px,env(safe-area-inset-bottom)); }
+  #editor .form-actions .primary { flex:1; }
+  .editor-section { padding:16px; }
+  #temporal-picker { padding:16px; max-height:calc(100dvh - 24px); }
+  #temporal-picker .picker-actions { bottom:-16px; }
+  .picker-shortcuts .btn { flex:1; padding-inline:8px; }
+}
+@media(max-width:1023px) {
+  .sidebar .nav { grid-template-columns:repeat(2,minmax(0,1.5fr)) 56px repeat(3,minmax(0,1fr)); min-height:76px; align-items:center; overflow:visible; }
+  .sidebar .nav .mobile-pets { width:56px; height:56px; min-height:56px; padding:6px 2px; border-radius:50%; border:3px solid var(--surface); outline:1px solid var(--line); background:var(--accent); color:var(--surface); box-shadow:0 4px 14px #203c3233; transform:translateY(-10px); }
+  .sidebar .nav .mobile-pets.active { background:var(--accent-dark); outline:2px solid var(--accent); }
+  .sidebar .nav .mobile-pets:focus-visible { outline:3px solid var(--accent); outline-offset:4px; }
+  .sidebar .nav .mobile-pets .nav-label { font-size:9px; }
+}
+@media(max-width:1023px) { .sidebar .nav .mobile-pets .nav-label { font-size:10px; } }
