@@ -65,3 +65,14 @@ jobs:
           python tests/forms_browser.py
           python tests/wheels_browser.py
           python tests/usability_browser.py
+      - name: Upload interface diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interface-diagnostics
+          path: |
+            reports/ui/
+            /tmp/petcare-ui.log
+            /tmp/petcare-*.png
+          if-no-files-found: ignore
+          retention-days: 7
