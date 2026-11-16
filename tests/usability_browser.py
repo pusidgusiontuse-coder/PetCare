@@ -61,6 +61,7 @@ with sync_playwright() as p:
     expect(page.locator('#nutrition.active')).to_be_visible()
     expect(field).to_have_value(original_name)
     page.get_by_role('link',name='Здоровье',exact=True).click()
+    page.evaluate('syncServerData(true)')  # Drain recovery refresh before opening record actions.
     before=page.locator('[data-del-health]').count()
     page.locator('#health-records .record-actions summary').first.click()
     page.once('dialog',lambda d:d.dismiss())

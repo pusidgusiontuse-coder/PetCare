@@ -15,23 +15,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import inspect, text, or_, update
+from sqlalchemy import text, or_, update
 from sqlalchemy.exc import IntegrityError
 import models
 from database import get_db
 from settings import SECRET_KEY
-
-
-def migrate(engine):
-    additions = {"users": {"disabled": "BOOLEAN NOT NULL DEFAULT 0", "is_admin": "BOOLEAN NOT NULL DEFAULT 0", "premium_until": "DATETIME", "premium_permanent": "BOOLEAN NOT NULL DEFAULT 0", "email_verified": "BOOLEAN NOT NULL DEFAULT 0", "token_version": "INTEGER NOT NULL DEFAULT 0"}, "pet_members": {"expires_at": "DATETIME"}}
-    with engine.begin() as c:
-        for table, cols in additions.items():
-            if table not in inspect(c).get_table_names():
-                continue
-            existing = {x['name'] for x in inspect(c).get_columns(table)}
-            for name, dtype in cols.items():
-                if name not in existing:
-                    c.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {dtype}'))
 
 
 def send_email(address, subject, body):
@@ -121,7 +109,7 @@ def digest(challenge_id, code):
 
 def enforce_quota(db, key, limit):
     # Atomic counter, shared by processes (also used for OCR and email abuse limits).
-    db.execute(text('INSERT OR IGNORE INTO request_quotas (key, count) VALUES (:key, 0)'), {'key': key})
+    db.execute(text('INSERT INTO request_quotas (key, count) VALUES (:key, 0) ON CONFLICT (key) DO NOTHING'), {'key': key})
     result = db.execute(text('UPDATE request_quotas SET count=count+1 WHERE key=:key AND count<:limit'), {'key': key, 'limit': limit})
     db.commit()
     if result.rowcount != 1: raise HTTPException(429, 'Лимит попыток исчерпан. Попробуйте позже.')
@@ -260,10 +248,18 @@ def install_features(app):
             u.email=item.email; u.email_verified=True; u.token_version+=1
             db.query(models.LoginSession).filter(models.LoginSession.user_id==u.id).update({'revoked':True})
         elif item.purpose=='delete_account':
-            for p in db.query(models.Pet).filter(models.Pet.owner_id==u.id).all():
-                profile_ids=[m.id for m in db.query(models.MatchProfile).filter(models.MatchProfile.pet_id==p.id).all()]
-                db.query(models.MatchDecision).filter(or_(models.MatchDecision.from_pet_id==p.id,models.MatchDecision.to_pet_id==p.id,models.MatchDecision.to_profile_id.in_(profile_ids))).delete(synchronize_session=False)
-                db.query(models.MatchProfile).filter(models.MatchProfile.pet_id==p.id).delete()
+            owned_pets = db.query(models.Pet).filter(models.Pet.owner_id==u.id).all()
+            pet_ids = [p.id for p in owned_pets]
+            profile_ids = [p.id for p in db.query(models.MatchProfile).filter(or_(
+                models.MatchProfile.owner_id==u.id, models.MatchProfile.pet_id.in_(pet_ids)
+            )).all()]
+            db.query(models.MatchDecision).filter(or_(
+                models.MatchDecision.from_pet_id.in_(pet_ids),
+                models.MatchDecision.to_pet_id.in_(pet_ids),
+                models.MatchDecision.to_profile_id.in_(profile_ids),
+            )).delete(synchronize_session=False)
+            db.query(models.MatchProfile).filter(models.MatchProfile.id.in_(profile_ids)).delete(synchronize_session=False)
+            for p in owned_pets:
                 db.delete(p)
             db.query(models.PetMember).filter(models.PetMember.user_id==u.id).delete()
             for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction):

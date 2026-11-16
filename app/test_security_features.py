@@ -2,11 +2,6 @@ import os,re,tempfile,uuid,json
 from datetime import datetime,timedelta,date
 from pathlib import Path
 from unittest.mock import AsyncMock,patch
-# Tests always use an isolated database, never application/user data.
-_tmp=tempfile.TemporaryDirectory()
-os.environ['DATABASE_URL']='sqlite:///'+str(Path(_tmp.name)/'test.db')
-os.environ.setdefault('SECRET_KEY','isolated-test-key-not-for-production-at-least-32-characters')
-os.environ['ENABLE_DEMO_LOGIN']='true'
 import pytest
 from fastapi.testclient import TestClient
 import main,models,features,auth,ocr
@@ -280,3 +275,34 @@ def test_background_push_deduplicates_without_open_browser(client,monkeypatch):
     with patch('pywebpush.webpush') as send:
         run(datetime(2026,11,13,15,1,tzinfo=MSK));run(datetime(2026,11,13,15,2,tzinfo=MSK))
         assert send.call_count==1
+
+
+def test_delete_pet_with_hidden_match_records(client):
+    owner=user(); p=pet(client,owner[2])
+    with SessionLocal() as db:
+        profile=models.MatchProfile(pet_id=p['id'],owner_id=owner[0],name='Лапа',species='Кошка',owner_contact='test@example.com')
+        db.add(profile);db.flush();profile_id=profile.id
+        db.add(models.MatchDecision(from_pet_id=p['id'],to_profile_id=profile.id,to_pet_id=p['id'],decision='like'))
+        db.commit()
+    assert client.delete(f"/api/v1/pets/{p['id']}",headers=owner[2]).status_code==204
+    with SessionLocal() as db:
+        assert db.get(models.MatchProfile,profile_id) is None
+        assert db.query(models.MatchDecision).filter(models.MatchDecision.to_profile_id==profile_id).count()==0
+
+
+def test_delete_account_with_legacy_match_profile(client,mail):
+    owner=user(); other=user(); p=pet(client,other[2])
+    with SessionLocal() as db:
+        profile=models.MatchProfile(owner_id=owner[0],pet_id=None,name='Архив',species='Кошка',owner_contact=owner[1])
+        db.add(profile);db.flush();profile_id=profile.id
+        db.add(models.MatchDecision(from_pet_id=p['id'],to_profile_id=profile_id,decision='like'))
+        db.commit()
+    response=client.post('/api/v1/auth/account-codes',headers=owner[2],json={
+        'email':owner[1],'purpose':'delete_account','current_password':'test-password'})
+    assert response.status_code==200,response.text
+    result=client.post('/api/v1/auth/confirm',json={'challenge_id':response.json()['challenge_id'],'code':code(mail)})
+    assert result.status_code==200,result.text
+    with SessionLocal() as db:
+        assert db.get(models.User,owner[0]) is None
+        assert db.get(models.MatchProfile,profile_id) is None
+        assert db.get(models.Pet,p['id']) is not None

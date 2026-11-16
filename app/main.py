@@ -8,7 +8,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, or_
+from sqlalchemy import or_, select
 
 from settings import ENABLE_DEMO_LOGIN
 import models
@@ -16,94 +16,9 @@ import schemas
 from database import engine, get_db
 from auth import get_password_hash, verify_password, create_access_token, get_current_user
 
-from features import migrate
-migrate(engine)
-
-# Создание всех таблиц базы данных при старте сервера
-models.Base.metadata.create_all(bind=engine)
-
-def ensure_db_columns():
-    """Автоматическая плавная миграция существующих SQLite таблиц при добавлении новых колонок"""
-    try:
-        with engine.connect() as conn:
-            res = conn.execute(text("PRAGMA table_info(pets)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "marks" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN marks TEXT"))
-            if "clinic_url" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN clinic_url VARCHAR(500)"))
-            if "doctor_name" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN doctor_name VARCHAR(200)"))
-            if "avatar_bg" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN avatar_bg VARCHAR(50) DEFAULT 'lavender'"))
-            if "avatar_accessory" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN avatar_accessory VARCHAR(50) DEFAULT 'none'"))
-            if "share_code" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN share_code VARCHAR(64)"))
-
-            rows = conn.execute(text("SELECT id FROM pets WHERE share_code IS NULL OR share_code = ''")).fetchall()
-            for r in rows:
-                code = models.generate_pet_share_code()
-                conn.execute(text("UPDATE pets SET share_code = :c WHERE id = :id"), {"c": code, "id": r[0]})
-            conn.commit()
-
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS pet_members (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pet_id INTEGER NOT NULL REFERENCES pets(id),
-                    user_id INTEGER NOT NULL REFERENCES users(id),
-                    role VARCHAR(50) DEFAULT 'co_owner',
-                    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.commit()
-
-            res = conn.execute(text("PRAGMA table_info(meal_plans)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "end_time" not in cols:
-                conn.execute(text("ALTER TABLE meal_plans ADD COLUMN end_time VARCHAR(20)"))
-
-            res = conn.execute(text("PRAGMA table_info(health_records)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "next_date" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN next_date DATE"))
-            if "file_name" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN file_name VARCHAR(255)"))
-            if "file_data" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN file_data TEXT"))
-
-            res = conn.execute(text("PRAGMA table_info(reminders)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "at" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN at VARCHAR(50)"))
-            if "interval_months" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN interval_months INTEGER"))
-            if "food" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN food VARCHAR(200)"))
-            if "status" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN status VARCHAR(50) DEFAULT 'pending'"))
-            if "done_by" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN done_by VARCHAR(100)"))
-            if "completed_at" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN completed_at DATETIME"))
-
-            res = conn.execute(text("PRAGMA table_info(feeding_logs)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "reminder_id" not in cols:
-                conn.execute(text("ALTER TABLE feeding_logs ADD COLUMN reminder_id INTEGER"))
-            if "completion_day" not in cols:
-                conn.execute(text("ALTER TABLE feeding_logs ADD COLUMN completion_day VARCHAR(20)"))
-
-            res = conn.execute(text("PRAGMA table_info(shopping_items)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "bought_by" not in cols:
-                conn.execute(text("ALTER TABLE shopping_items ADD COLUMN bought_by VARCHAR(100)"))
-
-            conn.commit()
-    except Exception as e:
-        print("[PetCare DB Init] Column check notice:", e)
-
-ensure_db_columns()
+# Schema changes are applied explicitly before starting workers.
+from schema import check_schema
+check_schema(engine)
 
 OPENAPI_TAGS = [
     {
@@ -911,6 +826,14 @@ def delete_pet(
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
     if pet.owner_id == current_user.id:
+        # Hidden PetMatch records still have enforced PostgreSQL foreign keys.
+        profile_ids = select(models.MatchProfile.id).where(models.MatchProfile.pet_id == pet_id)
+        db.query(models.MatchDecision).filter(or_(
+            models.MatchDecision.from_pet_id == pet_id,
+            models.MatchDecision.to_pet_id == pet_id,
+            models.MatchDecision.to_profile_id.in_(profile_ids),
+        )).delete(synchronize_session=False)
+        db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).delete(synchronize_session=False)
         db.delete(pet)
     else:
         member = db.query(models.PetMember).filter(

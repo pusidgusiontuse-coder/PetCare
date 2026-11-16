@@ -19,3 +19,9 @@ bootstrap-admin.json
 app/static/ocr/vendor/
 dist/
 reports/
+
+# PostgreSQL backups and private libpq connection files
+*.dump
+*.backup
+.pgpass
+pg_service.conf
