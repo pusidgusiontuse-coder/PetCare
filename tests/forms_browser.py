@@ -79,7 +79,9 @@ with sync_playwright() as p:
             button=page.locator('.nav .mobile-pets')
             rect=button.bounding_box()
             assert abs(rect['x']+rect['width']/2-width/2)<2, rect
-            assert abs(rect['height']-rect['width'])<1, rect
+            assert rect['width'] >= 44 and rect['height'] >= 44, rect
+            circle=button.locator('svg').bounding_box()
+            assert abs(circle['height']-circle['width'])<1, circle
             assert page.locator('.nav a:visible').count()==5
             page.screenshot(path=f'/tmp/petcare-nav-{width}.png')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')

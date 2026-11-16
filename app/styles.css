@@ -2399,7 +2399,7 @@ select {
   margin:10px 0 2px;
   cursor:pointer;
   width:fit-content;
-  transition:all .15s;
+  transition:background-color .15s,color .15s,border-color .15s,box-shadow .15s,opacity .15s,transform .15s;
 }
 
 .pet-card-code code {
@@ -3548,7 +3548,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   font-weight:650;
   white-space:nowrap;
   cursor:pointer;
-  transition:all .18s;
+  transition:background-color .18s,color .18s,border-color .18s,box-shadow .18s,opacity .18s,transform .18s;
 }
 
 .match-mode-tab:hover {
@@ -3830,7 +3830,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   cursor:pointer;
   white-space:nowrap;
   padding:8px 12px;
-  transition:all .18s;
+  transition:background-color .18s,color .18s,border-color .18s,box-shadow .18s,opacity .18s,transform .18s;
 }
 
 .btn-swipe-skip:hover {
@@ -3855,7 +3855,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   white-space:nowrap;
   padding:8px 12px;
   box-shadow:0 6px 18px #2862472b;
-  transition:all .18s;
+  transition:background-color .18s,color .18s,border-color .18s,box-shadow .18s,opacity .18s,transform .18s;
 }
 
 .btn-swipe-like:hover {
@@ -4085,7 +4085,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   line-height:1.1;
   white-space:nowrap;
   cursor:pointer;
-  transition:all .16s;
+  transition:background-color .16s,color .16s,border-color .16s,box-shadow .16s,opacity .16s,transform .16s;
 }
 
 .push-banner-btn:hover {
@@ -4132,7 +4132,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   padding:0;
   flex-shrink:0;
   margin-left:2px;
-  transition:all .15s;
+  transition:background-color .15s,color .15s,border-color .15s,box-shadow .15s,opacity .15s,transform .15s;
 }
 
 .push-banner-close:hover {
@@ -4728,4 +4728,31 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid
 @media(max-width:1023px) { .sidebar .nav .mobile-pets .nav-label { font-size:10px; } }
 @media(max-width:1023px) {
   html[data-friends-enabled="false"] .sidebar .nav { grid-template-columns:repeat(2,minmax(0,1fr)) 56px repeat(2,minmax(0,1fr)); }
+}
+
+/* Usability audit: stable five-item navigation and unobscured focus. */
+button, a { -webkit-tap-highlight-color:#28624726; }
+dialog { overscroll-behavior:contain; scroll-padding-block:24px 100px; }
+:is(input,select,textarea,button,a,summary) { scroll-margin-block:90px 120px; }
+h1,h2,h3 { text-wrap:balance; }
+.record,.activity-item,.pet-card-meta { overflow-wrap:anywhere; }
+.compare { font-variant-numeric:tabular-nums; }
+#editor-error,#auth-error { scroll-margin-top:24px; }
+@media(max-width:1023px) {
+  html[data-friends-enabled="false"] .sidebar .nav { grid-template-columns:repeat(5,minmax(0,1fr)); min-height:76px; padding:6px; gap:4px; border-radius:24px; }
+  .sidebar .nav a { display:grid; grid-template-rows:30px 16px; align-content:center; justify-items:center; gap:4px; padding:6px 2px; min-height:62px; border-radius:16px; font-size:11px; }
+  .sidebar .nav a > svg { width:23px; height:23px; }
+  .sidebar .nav .nav-label, .sidebar .nav .nav-label[data-mobile]::after { font-size:11px; line-height:16px; }
+  .sidebar .nav .nav-label[data-mobile] { font-size:0; }
+  .sidebar .nav a.active { box-shadow:none; }
+  .sidebar .nav .mobile-pets, .sidebar .nav .mobile-pets.active { width:100%; height:auto; min-height:62px; border:0; border-radius:16px; outline:none; background:transparent; color:var(--accent-dark); box-shadow:none; transform:none; }
+  .sidebar .nav .mobile-pets > svg { width:48px; height:48px; padding:10px; background:var(--accent); color:var(--surface); border:2px solid var(--surface); border-radius:50%; transform:translateY(-7px); box-shadow:0 2px 8px #203c3226; }
+  .sidebar .nav .mobile-pets.active > svg { background:var(--accent-dark); outline:2px solid var(--accent); outline-offset:1px; }
+  .sidebar .nav .mobile-pets .nav-label { font-size:11px; font-weight:700; }
+  .sidebar .nav a:focus-visible, .sidebar .nav .mobile-pets:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  .sidebar .nav a[aria-disabled="true"] { opacity:.45; }
+  .sidebar .nav a:not([aria-disabled="true"]):active { filter:brightness(.9); }
+}
+@media(prefers-reduced-motion:reduce) {
+  *, *::before, *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
 }

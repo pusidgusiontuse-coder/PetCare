@@ -109,7 +109,7 @@
           <div class="profile-form-actions">
             <button class="btn primary" type="submit">Сохранить карточку</button>
             <button class="btn ghost" type="button" id="health-profile-reset">Отменить изменения</button>
-            <p id="health-profile-feedback" role="status" aria-live="polite"></p>
+            <p id="health-profile-feedback" tabindex="-1" role="status" aria-live="polite"></p>
           </div>
         </form>
       </details>
@@ -508,7 +508,7 @@
   <form id="editor-form">
     <h2 id="editor-title"></h2>
     <p id="editor-context" class="small"></p>
-    <p id="editor-error" role="alert" hidden></p>
+    <p id="editor-error" role="alert" tabindex="-1" hidden></p>
     <div id="editor-fields" class="form-grid"></div>
     <div class="form-actions">
       <button type="button" class="btn ghost" id="cancel-editor">Отмена</button>
@@ -531,20 +531,20 @@
     <button type="button" class="auth-tab" id="tab-register" role="tab" aria-selected="false">Регистрация</button>
   </div>
 
-  <div id="auth-error" class="auth-error" hidden></div>
+  <div id="auth-error" class="auth-error" role="alert" tabindex="-1" hidden></div>
 
   <form id="auth-form" class="auth-form">
     <div class="field" id="auth-name-field" hidden>
       <label for="auth-name">Ваше имя</label>
-      <input type="text" id="auth-name" placeholder="Илья Иванов" autocomplete="name">
+      <input type="text" id="auth-name" name="name" autocomplete="name" placeholder="Илья Иванов" autocomplete="name">
     </div>
     <div class="field">
       <label for="auth-email">Электронная почта</label>
-      <input type="text" id="auth-email" required placeholder="name@example.com" autocomplete="username">
+      <input type="text" id="auth-email" name="username" spellcheck="false" required placeholder="name@example.com" autocomplete="username">
     </div>
     <div class="field">
       <label for="auth-password">Пароль</label>
-      <input type="password" id="auth-password" required minlength="8" placeholder="••••••••" autocomplete="current-password">
+      <input type="password" id="auth-password" name="password" required minlength="8" placeholder="••••••••" autocomplete="current-password">
     </div>
     <button type="submit" class="btn primary auth-submit" id="auth-submit-btn">Войти в аккаунт</button>
   </form>
@@ -760,6 +760,7 @@ function notify(message) {
   if ($('editor')?.open) {
     $('editor-error').textContent = message;
     $('editor-error').hidden = false;
+    $('editor-error').focus();
   } else {
     showCopiedToast(message);
   }
@@ -776,10 +777,10 @@ window.copyPetCode = function(code) {
     navigator.clipboard.writeText(code).then(() => {
       showCopiedToast('Скопировано');
     }).catch(() => {
-      showCopiedToast('Скопировано');
+      notify('Не удалось скопировать. Выделите код и скопируйте вручную.');
     });
   } else {
-    showCopiedToast('Скопировано');
+    notify('Выделите код и скопируйте вручную.');
   }
 };
 
@@ -1092,7 +1093,7 @@ function petArt(p, mood = petMood(p.id)) {
 }
 
 function petAvatar(p) {
-  return p?.photo ? '<img src="' + esc(p.photo) + '" alt="" draggable="false">' : petArt(p || { species: 'Кот' }, 'neutral');
+  return p?.photo ? '<img src="' + esc(p.photo) + '" width="120" height="120" alt="" draggable="false">' : petArt(p || { species: 'Кот' }, 'neutral');
 }
 
 function petProfileAge(birthDate, now = new Date()) {
@@ -1190,9 +1191,18 @@ function routeHash(name, petId = pet()?.id) {
   return '#/pet/' + encodeURIComponent(petId) + '/' + name;
 }
 
+function mayDiscardPetEdits() {
+  const form = $('health-pet-form');
+  if (form.dataset.dirty !== 'true') return true;
+  if (!confirm('В карточке питомца есть несохранённые изменения. Выйти без сохранения?')) return false;
+  renderHealthPetProfile(true);
+  return true;
+}
+
 function setPetContext(id) {
   if (!state.pets.some(p => p.id === String(id))) return false;
   const changed = state.selected !== String(id);
+  if (changed && !mayDiscardPetEdits()) return false;
   state.selected = String(id);
   healthFilter = 'all'; documentFilter = 'all'; careFilter = 'all';
   if ($('food-filter')) $('food-filter').value = 'all';
@@ -1212,6 +1222,8 @@ function show(name, updateUrl = true) {
   if (name === 'match' && !FRIENDS_ENABLED) { name = 'pets'; history.replaceState(null, '', routeHash('pets')); }
   if (name === 'home') name = 'health';
   if (!Object.hasOwn(pageLabels, name) || (!pet() && !['pets', 'profile'].includes(name))) name = 'pets';
+  if (name !== page && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
+  const pageChanged = name !== page;
   const enteringMatch = name === 'match' && page !== 'match';
   page = name;
   if (enteringMatch && pet()) {
@@ -1232,6 +1244,7 @@ function show(name, updateUrl = true) {
   }
   render();
   window.scrollTo(0, 0);
+  if (pageChanged) { const heading = $(name)?.querySelector('h1'); if (heading) { heading.tabIndex = -1; heading.focus({preventScroll:true}); } }
 }
 
 function renderShell() {
@@ -1264,7 +1277,7 @@ const reminderStatus = e => {
 
 function render() {
   const current = pet();
-  document.querySelectorAll('.nav [data-page]').forEach(button => { button.href = routeHash(button.dataset.page); button.setAttribute('aria-disabled', String(!current && button.dataset.page !== 'pets')); });
+  document.querySelectorAll('.nav [data-page]').forEach(button => { button.href = routeHash(button.dataset.page); button.tabIndex = !current && button.dataset.page !== 'pets' ? -1 : 0; button.setAttribute('aria-disabled', String(!current && button.dataset.page !== 'pets')); });
   $('pet-account-button').disabled = !current;
 
   if (!current) {
@@ -1370,10 +1383,13 @@ function renderHealth() {
     btn.onclick = async () => {
       const rec = state.health.find(x => x.id === btn.dataset.delHealth);
       if (!rec) return;
-      state.health = state.health.filter(x => x.id !== rec.id);
-      if (rec.serverId) apiFetch('/health-records/' + rec.serverId, { method: 'DELETE' });
-      renderHealth();
-      notify('Запись удалена');
+      if (!confirm('Удалить запись «' + (rec.title || 'О здоровье') + '»? Это действие нельзя отменить.')) return;
+      btn.disabled = true;
+      try {
+        if (rec.serverId) await apiFetch('/health-records/' + rec.serverId, {method:'DELETE'});
+        state.health = state.health.filter(x => x.id !== rec.id); renderHealth(); notify('Запись удалена');
+      } catch (error) { notify('Не удалось удалить запись. ' + error.message); }
+      finally { btn.disabled = false; }
     };
   });
 
@@ -1383,10 +1399,13 @@ function renderHealth() {
     btn.onclick = async () => {
       const pr = state.prescriptions.find(x => x.id === btn.dataset.delPresc);
       if (!pr) return;
-      state.prescriptions = state.prescriptions.filter(x => x.id !== pr.id);
-      if (pr.serverId) apiFetch('/prescriptions/' + pr.serverId, { method: 'DELETE' }).catch(() => {});
-      renderHealth();
-      notify('Назначение удалено');
+      if (!confirm('Удалить назначение «' + pr.name + '»? Это действие нельзя отменить.')) return;
+      btn.disabled = true;
+      try {
+        if (pr.serverId) await apiFetch('/prescriptions/' + pr.serverId, {method:'DELETE'});
+        state.prescriptions = state.prescriptions.filter(x => x.id !== pr.id); renderHealth(); notify('Назначение удалено');
+      } catch (error) { notify('Не удалось удалить назначение. ' + error.message); }
+      finally { btn.disabled = false; }
     };
   });
 
@@ -1415,7 +1434,7 @@ const f = { date: n => field(n, 'Дата', 'date', { required: true }), notes: 
 
 function petProfileFields(p) {
   const shareBlock = p?.shareCode
-    ? '<div class="field wide-mobile"><label>Код совместного ухода</label><div class="join-input-group" style="margin-top:8px"><input type="text" value="' + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать</button></div></div>'
+    ? '<div class="field wide-mobile"><label>Код совместного ухода</label><div class="join-input-group" style="margin-top:8px"><input type="text" aria-label="Код совместного ухода" value="' + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать</button></div></div>'
     : '';
   return field('name', 'Имя', 'text', { required: true }) +
     field('species', 'Вид', 'text', { required: true, placeholder: 'Кошка, собака…' }) +
@@ -1461,7 +1480,7 @@ function renderHealthPetProfile(force = false) {
 const healthPetForm = $('health-pet-form');
 healthPetForm.addEventListener('input', () => { healthPetForm.dataset.dirty = 'true'; });
 healthPetForm.addEventListener('change', () => { healthPetForm.dataset.dirty = 'true'; });
-$('health-profile-reset').onclick = () => renderHealthPetProfile(true);
+$('health-profile-reset').onclick = () => { if (healthPetForm.dataset.dirty !== 'true' || confirm('Отменить изменения карточки питомца?')) renderHealthPetProfile(true); };
 
 healthPetForm.onsubmit = async event => {
   event.preventDefault();
@@ -1469,27 +1488,27 @@ healthPetForm.onsubmit = async event => {
   const raw = Object.fromEntries(new FormData(form));
   const values = Object.fromEntries(['name', 'species', 'breed', 'birthDate', 'sex', 'sterilized', 'notes', 'marks', 'chip'].map(key => [key, String(raw[key] || '').trim()]));
   const feedback = $('health-profile-feedback');
-  const fail = message => { feedback.textContent = message; feedback.classList.add('is-error'); };
+  const fail = message => { feedback.textContent = message; feedback.classList.add('is-error'); feedback.focus(); };
   if (!values.name || !values.species) { fail('Укажите имя и вид питомца.'); return; }
   if (values.birthDate && values.birthDate > petProfileLocalDate()) { fail('Дата рождения не может быть в будущем.'); return; }
   const target = state.pets.find(p => p.id === form.dataset.petId) || pet();
   if (!target) return;
 
-  Object.assign(target, values);
+  const updated = {...target, ...values};
   if (target.serverId) {
     try {
       await apiFetch('/pets/' + target.serverId, {
         method: 'PUT',
         body: JSON.stringify({
-          name: target.name,
-          species: target.species,
-          breed: target.breed || 'Метис',
-          birth_date: target.birthDate || today(),
-          sex: target.sex,
-          sterilized: target.sterilized === 'Да',
-          microchip_number: target.chip || null,
-          notes: target.notes || null,
-          marks: target.marks || null
+          name: updated.name,
+          species: updated.species,
+          breed: updated.breed || 'Метис',
+          birth_date: updated.birthDate || today(),
+          sex: updated.sex,
+          sterilized: updated.sterilized === 'Да',
+          microchip_number: updated.chip || null,
+          notes: updated.notes || null,
+          marks: updated.marks || null
         })
       });
     } catch (err) {
@@ -1497,7 +1516,8 @@ healthPetForm.onsubmit = async event => {
       return;
     }
   }
-  logActivity(target.id, 'Обновил(а) карточку питомца ' + target.name, '🐾');
+  Object.assign(target, values);
+  logActivity(target.id, 'Обновил(а) карточку питомца ' + updated.name, '🐾');
   form.dataset.dirty = 'false';
   render();
   feedback.classList.remove('is-error');
@@ -2220,7 +2240,7 @@ function renderProfile() {
     const coOwners = Array.isArray(p.coOwners) ? p.coOwners : [];
     const localMembers = state.members.filter(m => isForPet(m, p));
     const shareCodeHtml = p.shareCode
-      ? '<div class="record" style="padding-top:4px"><div class="small" style="margin-bottom:6px">Код совместного ухода за <b>' + esc(p.name) + '</b> (передайте члену семьи):</div><div class="join-input-group"><input type="text" readonly value="' + esc(p.shareCode) + '"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать код</button></div></div>'
+      ? '<div class="record" style="padding-top:4px"><div class="small" style="margin-bottom:6px">Код совместного ухода за <b>' + esc(p.name) + '</b> (передайте члену семьи):</div><div class="join-input-group"><input type="text" aria-label="Код совместного ухода" readonly value="' + esc(p.shareCode) + '"><button type="button" class="btn tiny" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')">Скопировать код</button></div></div>'
       : '';
     const joinQuickHtml = '<div class="record"><div class="small" style="margin-bottom:6px">Подключиться к другому питомцу по коду:</div><div class="join-input-group"><input type="text" id="profile-join-code" placeholder="Например: PET-REXX-3F88-P9D1"><button type="button" class="btn tiny primary" id="profile-join-btn">Подключиться</button></div></div>';
 
@@ -2319,7 +2339,7 @@ function renderDetails() {
     ['Номер чипа', p.chip]
   ];
   const shareHtml = p.shareCode
-    ? '<div class="profile-fact-wide"><dt>Код совместного ухода</dt><dd><span class="pet-card-code" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')"><code>' + esc(p.shareCode) + '</code><span class="copy-label">скопировать код</span></span></dd></div>'
+    ? '<div class="profile-fact-wide"><dt>Код совместного ухода</dt><dd><button type="button" class="pet-card-code" onclick="copyPetCode(\'' + esc(p.shareCode) + '\')"><code>' + esc(p.shareCode) + '</code><span class="copy-label">скопировать код</span></button></dd></div>'
     : '';
   $('editor-fields').innerHTML =
     '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(p.species) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? ' · Совместный уход' : '') + '</p></div></div>' +
@@ -3080,6 +3100,9 @@ $('auth-form').onsubmit = async e => {
   const password = $('auth-password').value;
   const fullName = $('auth-name').value.trim() || 'Владелец';
 
+  const submit = $('auth-submit-btn');
+  submit.disabled = true; submit.textContent = 'Подождите…';
+  $('tab-login').disabled = true; $('tab-register').disabled = true;
   try {
     const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
     const payload = authMode === 'login' ? { email, password } : { email, password, full_name: fullName, timezone: 'Europe/Moscow' };
@@ -3100,8 +3123,8 @@ $('auth-form').onsubmit = async e => {
     }
   } catch (err) {
     $('auth-error').textContent = err.message || 'Ошибка авторизации';
-    $('auth-error').hidden = false;
-  }
+    $('auth-error').hidden = false; $('auth-error').focus();
+  } finally { submit.disabled = false; submit.textContent = authMode === 'login' ? 'Войти в аккаунт' : 'Создать аккаунт'; $('tab-login').disabled = false; $('tab-register').disabled = false; }
 };
 
 document.querySelectorAll('[data-demo-login]').forEach(btn => {
@@ -3226,8 +3249,10 @@ setInterval(() => {
 
   copyButton.onclick = async () => {
     if (!recognizedText.value.trim()) return;
-    await navigator.clipboard?.writeText(recognizedText.value);
-    showCopiedToast('Скопировано');
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(recognizedText.value); showCopiedToast('Скопировано');
+    } catch { setStatus('Не удалось скопировать. Выделите распознанный текст и скопируйте вручную.', true); }
   };
 })();
 
@@ -3437,7 +3462,7 @@ const mayCloseEditor = () => !editorDirty || confirm('Закрыть форму 
 $('editor').addEventListener('cancel', e => { if (!mayCloseEditor()) e.preventDefault(); });
 $('editor').addEventListener('close', () => { editorDirty = false; });
 $('cancel-editor').onclick = $('close-editor').onclick = () => { if (mayCloseEditor()) $('editor').close(); };
-window.addEventListener('beforeunload', e => { if (editorDirty && $('editor').open) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if ((editorDirty && $('editor').open) || $('health-pet-form').dataset.dirty === 'true') { e.preventDefault(); e.returnValue = ''; } });
 
 document.querySelectorAll('dialog').forEach(d => {
   d.addEventListener('click', e => { if (e.target === d && (d.id !== 'editor' || mayCloseEditor())) d.close(); });
@@ -4060,6 +4085,7 @@ function restoreRoute() {
   try { parts = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent); }
   catch { show('pets'); return; }
   if (parts[0] === 'pet' && state.pets.some(p => p.id === parts[1])) {
+    if (state.selected !== parts[1] && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
     state.selected = parts[1];
     show(parts[2] || 'health', false);
   } else {
