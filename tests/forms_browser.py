@@ -12,7 +12,8 @@ with sync_playwright() as p:
         assert result.ok
         token = result.json()['access_token']
         context.add_init_script('localStorage.setItem("petcare_jwt",' + json.dumps(token) + ')')
-        page = context.new_page(); errors=[]
+        page = context.new_page(); errors=[]; friends_requests=[]
+        page.on('request', lambda request: friends_requests.append(request.url) if '/match-' in request.url else None)
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(BASE); page.wait_for_load_state('networkidle')
         page.wait_for_function('state.pets.length > 0')
@@ -65,15 +66,25 @@ with sync_playwright() as p:
         expect(moment).to_be_focused()
         page.once('dialog', lambda d:d.accept()); page.locator('#close-editor').click()
         page.evaluate("show('pets')")
+        expect(page.locator('.nav [data-page=match]')).to_be_hidden()
+        page.evaluate("show('match')")
+        expect(page.locator('#pets.active')).to_be_visible()
+        expect(page).to_have_url(BASE + '/#/pets')
+        assert page.locator('#match').count() == 1  # Preserved, not removed.
+        expect(page.locator('#match')).to_be_hidden()
+        page.evaluate("openModal('pet-details')")
+        expect(page.locator('[data-card-page=match]')).to_have_count(0)
+        page.locator('#close-editor').click()
         if width < 1024:
             button=page.locator('.nav .mobile-pets')
             rect=button.bounding_box()
             assert abs(rect['x']+rect['width']/2-width/2)<2, rect
             assert abs(rect['height']-rect['width'])<1, rect
-            assert page.locator('.nav a').count()==6
+            assert page.locator('.nav a:visible').count()==5
             page.screenshot(path=f'/tmp/petcare-nav-{width}.png')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert not errors, errors
+        assert not friends_requests, friends_requests
         print(f'All forms and calendar passed at {width}x{height}')
         context.close()
     browser.close()

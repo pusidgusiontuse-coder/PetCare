@@ -44,7 +44,7 @@
       <a href="#pets" data-page="pets" class="mobile-pets" aria-label="Питомцы"><svg aria-hidden="true"><use href="#paw"/></svg><span class="nav-label">Питомцы</span></a>
       <a href="#care" data-page="care" aria-label="Уход и события"><svg aria-hidden="true"><use href="#clock"/></svg><span class="nav-label" data-mobile="Уход">Уход и события</span></a>
       <a href="#documents" data-page="documents" aria-label="Документы"><svg aria-hidden="true"><use href="#folder"/></svg><span class="nav-label" data-mobile="Файлы">Документы</span></a>
-      <a href="#match" data-page="match" aria-label="Поиск друзей"><svg aria-hidden="true"><use href="#spark"/></svg><span class="nav-label" data-mobile="Друзья">Поиск друзей</span><span id="match-nav-badge" class="nav-badge" hidden>0</span></a>
+      <a href="#match" data-page="match" hidden aria-label="Поиск друзей"><svg aria-hidden="true"><use href="#spark"/></svg><span class="nav-label" data-mobile="Друзья">Поиск друзей</span><span id="match-nav-badge" class="nav-badge" hidden>0</span></a>
     </nav>
     <div class="sidebar-bottom">
       <button id="profile-paw" class="owner-button" aria-label="Профиль и настройки" title="Профиль и настройки" type="button"><span class="initial" id="owner-initial">И</span><span><b id="owner-name">Илья</b><small id="owner-email">Профиль и настройки</small></span><span aria-hidden="true">↗</span></button>
@@ -315,7 +315,7 @@
     </section>
 
     <!-- SECTION: MATCH (ПОИСК ДРУЗЕЙ И КОМПАНИИ ДЛЯ ПИТОМЦА) -->
-    <section id="match" class="section">
+    <section hidden id="match" class="section">
       <div class="topline">
         <div>
           <p class="eyebrow">СООБЩЕСТВО ХВОСТАТЫХ</p>
@@ -607,6 +607,12 @@
 // 1. CORE HELPERS & API CLIENT (ZERO-STORAGE JWT + BACKEND SYNC)
 // =====================================================================
 const $ = id => document.getElementById(id);
+// Temporarily paused; retain all Friends UI, API integration and stored profiles.
+const FRIENDS_ENABLED = false;
+document.documentElement.dataset.friendsEnabled = String(FRIENDS_ENABLED);
+document.querySelector('.nav [data-page="match"]').hidden = !FRIENDS_ENABLED;
+document.getElementById('match').hidden = !FRIENDS_ENABLED;
+
 const STORAGE_AUTH_KEY = 'petcare_jwt';
 const STORAGE_PUSH_KEY = 'petcare_push_settings';
 let authToken = '';
@@ -1203,6 +1209,7 @@ function selectPet(id, destination = page) {
 }
 
 function show(name, updateUrl = true) {
+  if (name === 'match' && !FRIENDS_ENABLED) { name = 'pets'; history.replaceState(null, '', routeHash('pets')); }
   if (name === 'home') name = 'health';
   if (!Object.hasOwn(pageLabels, name) || (!pet() && !['pets', 'profile'].includes(name))) name = 'pets';
   const enteringMatch = name === 'match' && page !== 'match';
@@ -1810,6 +1817,7 @@ window.copyOwnerContact = function(contact) {
 };
 
 async function loadMatchDataForActivePet(silent = false) {
+  if (!FRIENDS_ENABLED) return;
   const p = pet();
   if (!p || !p.serverId) return;
   try {
@@ -1971,6 +1979,7 @@ function wireMatchCardEvents(container) {
 }
 
 function renderMatch() {
+  if (!FRIENDS_ENABLED) return;
   const p = pet();
   if (!p || !$('match')) return;
   const m = getActiveMatchData();
@@ -2320,7 +2329,7 @@ function renderDetails() {
     '</dl>' +
     '<div class="row"><button class="btn" type="button" id="edit-pet">Изменить карточку</button></div>' +
     '<div class="pet-card-shortcuts field full"><p class="small">Перейти к записям питомца</p><div class="row">' +
-      [['health', 'Здоровье'], ['nutrition', 'Питание'], ['care', 'Уход и события'], ['documents', 'Документы'], ['match', 'Поиск друзей']].map(([key, label]) => '<button type="button" class="btn" data-card-page="' + key + '">' + label + '</button>').join('') +
+      [['health', 'Здоровье'], ['nutrition', 'Питание'], ['care', 'Уход и события'], ['documents', 'Документы'], ['match', 'Поиск друзей']].filter(([key]) => key !== 'match' || FRIENDS_ENABLED).map(([key, label]) => '<button type="button" class="btn" data-card-page="' + key + '">' + label + '</button>').join('') +
     '</div></div>';
 
   $('edit-pet').onclick = () => { $('editor').close(); openModal('pet-edit'); };

@@ -4726,3 +4726,6 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid
   .sidebar .nav .mobile-pets .nav-label { font-size:9px; }
 }
 @media(max-width:1023px) { .sidebar .nav .mobile-pets .nav-label { font-size:10px; } }
+@media(max-width:1023px) {
+  html[data-friends-enabled="false"] .sidebar .nav { grid-template-columns:repeat(2,minmax(0,1fr)) 56px repeat(2,minmax(0,1fr)); }
+}
