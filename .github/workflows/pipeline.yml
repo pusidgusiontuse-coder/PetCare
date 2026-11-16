@@ -51,6 +51,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y restic
           if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            sudo apt-get install -y curl ca-certificates gnupg
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl --fail --silent --show-error --location --retry 3 \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            pgdg_fingerprint=$(gpg --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+            test "$pgdg_fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/petcare-pgdg.list
+            sudo apt-get update
             sudo apt-get install -y postgresql-client-17
           fi
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
