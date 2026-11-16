@@ -9,6 +9,7 @@ with sync_playwright() as p:
     context = browser.new_context(viewport={'width':375,'height':812}, reduced_motion='reduce')
     response = context.request.post(BASE+'/api/v1/auth/demo-login/1')
     assert response.ok
+    context.add_init_script("window.__PETCARE_TEST__=true;")
     context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(response.json()['access_token'])+')')
     page=context.new_page(); errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
@@ -64,6 +65,8 @@ with sync_playwright() as p:
     page.evaluate('syncServerData(true)')  # Drain recovery refresh before opening record actions.
     before=page.locator('[data-del-health]').count()
     page.locator('#health-records .record-actions summary').first.click()
+    page.evaluate('syncServerData(true)')  # Background refresh must preserve the open action menu.
+    expect(page.locator('[data-del-health]').first).to_be_visible()
     page.once('dialog',lambda d:d.dismiss())
     page.locator('[data-del-health]').first.click()
     assert page.locator('[data-del-health]').count()==before

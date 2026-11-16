@@ -25,3 +25,7 @@ reports/
 *.backup
 .pgpass
 pg_service.conf
+
+# Frontend dependencies and compiled Vite assets
+node_modules/
+app/static/frontend/

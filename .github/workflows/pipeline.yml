@@ -31,6 +31,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -72,6 +80,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -94,6 +110,12 @@ jobs:
           python tests/wheels_browser.py
           python tests/usability_browser.py
           python tests/hierarchy_browser.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: app/static/frontend/
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload interface diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

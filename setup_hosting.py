@@ -14,6 +14,8 @@ parser.add_argument('--public-dir', type=Path, help='Existing website document r
 args = parser.parse_args()
 if not (3, 10) <= sys.version_info[:2] <= (3, 12):
     raise SystemExit('Use Python 3.10–3.12 (recommended: 3.12).')
+if not (ROOT / 'app' / 'static' / 'frontend' / 'index.html').is_file():
+    raise SystemExit('Frontend build missing. Run npm ci && npm run build locally and upload app/static/frontend/ before setup.')
 public = (args.public_dir or ROOT / 'public').expanduser().resolve()
 # Never put private files under the web root.
 if ROOT == public or public in ROOT.parents:

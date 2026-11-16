@@ -12,6 +12,7 @@ with sync_playwright() as playwright:
         response = context.request.post(BASE + '/api/v1/auth/demo-login/1')
         assert response.ok, response.text()
         token = response.json()['access_token']
+        context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt", ' + __import__('json').dumps(token) + ')')
         page = context.new_page()
         page.emulate_media(reduced_motion='reduce')
@@ -93,6 +94,16 @@ with sync_playwright() as playwright:
         expect(entry).to_contain_text('Отказался от корма')
         expect(entry).to_contain_text('Заметка для проверки')
         page.screenshot(path=f'/tmp/petcare-food-journal-{width}.png', full_page=True)
+        # React filter state must reset through the bridge when the pet changes.
+        original_pet = page.evaluate('pet().id')
+        page.locator('#food-filter').select_option('treat')
+        page.locator('#pet-account-button').click()
+        page.locator('.account-row:not(.is-current)').first.click()
+        expect(page.locator('#food-filter')).to_have_value('all')
+        page.locator('#pet-account-button').click()
+        page.locator('[data-account-pet="' + original_pet + '"]').click()
+        expect(page.locator('#food-filter')).to_have_value('all')
+        expect(page.locator('.food-entry').filter(has_text=food_name)).to_be_visible()
         page.get_by_role('link', name='Документы', exact=True).click()
         page.evaluate('''() => {
             state.health = [{id:'visit-new',petId:pet().id,title:'Анализ крови',type:'other',date:'2026-11-15',attachment:{name:'new.pdf'}},

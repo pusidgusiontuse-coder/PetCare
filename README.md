@@ -1,8 +1,10 @@
 # PetCare
 
-Python/FastAPI + PostgreSQL + HTML/CSS/JavaScript. Схема базы управляется Alembic.
+Python/FastAPI + PostgreSQL + React/TypeScript (постепенный перенос интерфейса). Схема базы управляется Alembic.
 
 ## Запуск и миграция
+
+Frontend: [структура React/TS, сборка и разработка](docs/FRONTEND.md). Для сборки нужен Node.js 22.12+.
 
 Полная инструкция: [PostgreSQL: запуск, перенос SQLite, резервные копии и откат](docs/POSTGRESQL.md).
 
@@ -10,6 +12,8 @@ Python/FastAPI + PostgreSQL + HTML/CSS/JavaScript. Схема базы упра�
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r app/requirements.txt
+npm ci
+npm run build
 # Настройте закрытый app/.env по app/.env.example и создайте PostgreSQL базу.
 python -m alembic upgrade head
 python -m uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000
@@ -18,6 +22,8 @@ python -m uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000
 Для существующего SQLite не запускайте сервис с пустой базой: сначала выполните перенос по инструкции. `DATABASE_URL` обязателен; SQLite больше не выбирается автоматически. Файлы `.env`, `data/` и резервные копии не публикуются.
 
 - `app/` — приложение, API, серверные уведомления и тесты.
+- `app/frontend/` — исходники React/TypeScript и переходный JavaScript-модуль.
+- `app/static/frontend/` — сгенерированная production-сборка (создаётся через `npm run build`).
 - `migrations/` — версии схемы Alembic.
 - `app/transfer_sqlite.py` — проверяемый перенос всех данных SQLite в пустой PostgreSQL.
 - `compose.yaml` — локальный PostgreSQL 17.

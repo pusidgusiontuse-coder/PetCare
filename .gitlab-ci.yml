@@ -1,9 +1,22 @@
 image: python:3.12-slim
-stages: [test]
+stages: [build, test]
 services:
   - name: postgres:17
     alias: postgres
+frontend:
+  image: node:22
+  stage: build
+  services: []
+  script:
+    - npm ci
+    - npm run lint
+    - npm test
+    - npm run build
+  artifacts:
+    paths: [app/static/frontend/]
+    expire_in: 7 days
 test:
+  needs: [frontend]
   stage: test
   variables:
     SECRET_KEY: 'ci-only-key-at-least-32-characters-do-not-use-in-production'

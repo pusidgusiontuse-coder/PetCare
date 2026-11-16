@@ -1,0 +1,36 @@
+import { Icons } from './components/Icons';
+import { Sidebar } from './components/Sidebar';
+import { AppHeader } from './components/AppHeader';
+import { Dialogs } from './components/Dialogs';
+import { PetsPage } from './pages/PetsPage';
+import { HealthPage } from './pages/HealthPage';
+import { NutritionPage } from './pages/NutritionPage';
+import { CarePage } from './pages/CarePage';
+import { DocumentsPage } from './pages/DocumentsPage';
+import { MatchPage } from './pages/MatchPage';
+import { ProfilePage } from './pages/ProfilePage';
+
+// Legacy code fills empty data containers. This shell mounts once and does not
+// reconcile their contents; NutritionTools owns its entire subtree in React.
+export function App() {
+  return <>
+    <Icons />
+    <div className="app">
+      <a className="skip-link" href="#main-content">К содержимому</a>
+      <Sidebar />
+      <main className="content" id="main-content" tabIndex={-1}>
+        <AppHeader />
+        <PetsPage />
+        <HealthPage />
+        <NutritionPage />
+        <CarePage />
+        <DocumentsPage />
+        <MatchPage />
+        <ProfilePage />
+      </main>
+    </div>
+    <Dialogs />
+    <div id="push-banner-stack" className="push-banner-stack" aria-live="assertive" />
+    <div id="toast" className="toast" role="status" aria-live="polite" />
+  </>;
+}

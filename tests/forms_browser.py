@@ -11,6 +11,7 @@ with sync_playwright() as p:
         result = context.request.post(BASE + '/api/v1/auth/demo-login/1')
         assert result.ok
         token = result.json()['access_token']
+        context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt",' + json.dumps(token) + ')')
         page = context.new_page(); errors=[]; friends_requests=[]
         page.on('request', lambda request: friends_requests.append(request.url) if '/match-' in request.url else None)

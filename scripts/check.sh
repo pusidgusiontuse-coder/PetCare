@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python -c 'import sys; assert sys.version_info[:2] == (3, 12), "Activate a Python 3.12 environment"'
+npm ci
+npm run lint
+npm test
+npm run build
 python -m pip check
 python -m compileall -q app
 # TEST_DATABASE_URL must point to a disposable PostgreSQL database.

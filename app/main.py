@@ -1936,13 +1936,10 @@ def serve_styles():
 
 @app.get("/", include_in_schema=False)
 def serve_frontend():
-    index_path = Path(__file__).resolve().parent / "index.html"
+    index_path = Path(__file__).resolve().parent / "static" / "frontend" / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return {"status": "ok", "service": "PetCare API v1"}
-
-
-
+    raise HTTPException(status_code=503, detail="Frontend build missing. Run npm ci && npm run build before starting PetCare.")
 
 
 from features import install_features

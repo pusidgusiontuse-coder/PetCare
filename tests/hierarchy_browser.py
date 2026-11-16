@@ -10,6 +10,7 @@ with sync_playwright() as p:
         context=browser.new_context(viewport={'width':width,'height':height},reduced_motion='reduce')
         r=context.request.post(BASE+'/api/v1/auth/demo-login/1');assert r.ok
         token=r.json()['access_token']
+        context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(token)+')')
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(BASE);page.wait_for_load_state('networkidle');page.evaluate('syncServerData(true)')

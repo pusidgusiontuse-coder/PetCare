@@ -9,6 +9,7 @@ with sync_playwright() as p:
     for width,height in ((1440,900),(375,812),(812,375)):
         context=browser.new_context(viewport={'width':width,'height':height},has_touch=True,is_mobile=width < 1024,reduced_motion='reduce')
         result=context.request.post(BASE+'/api/v1/auth/demo-login/1');assert result.ok
+        context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(result.json()['access_token'])+')')
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(BASE);page.wait_for_load_state('networkidle');page.wait_for_function('state.pets.length > 0')

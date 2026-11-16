@@ -10,6 +10,9 @@
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r app/requirements.txt
+# Node.js 22.12+; см. docs/FRONTEND.md
+npm ci
+npm run build
 cp app/.env.example app/.env
 chmod 600 app/.env
 ```
@@ -49,7 +52,7 @@ PY
 ```
 
 3. Создайте **новую пустую** PostgreSQL базу. Укажите её в `DATABASE_URL` в закрытом `app/.env`. Не задавайте URL рабочей базы в тестовом окружении.
-4. Установите новые зависимости и примените схему. Затем импортируйте копию:
+4. Установите новые зависимости, соберите frontend по [FRONTEND.md](FRONTEND.md) и примените схему. Затем импортируйте копию:
 
 ```sh
 pip install -r app/requirements.txt
