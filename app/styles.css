@@ -4777,3 +4777,18 @@ h1,h2,h3 { text-wrap:balance; }
 .time-wheel { position:relative; z-index:1; }
 .time-wheel-frame::after { z-index:0; }
 .time-wheel-frame:has(.time-wheel:focus-visible) { outline:3px solid var(--accent); outline-offset:3px; }
+
+/* Pets keeps a circular accent; hovering must never fill the whole tab. */
+@media(max-width:1023px) {
+  .sidebar .nav .mobile-pets:hover:not(:disabled),
+  .sidebar .nav .mobile-pets.active:hover:not(:disabled) {
+    background:transparent;
+    color:var(--accent-dark);
+    box-shadow:none;
+  }
+  .sidebar .nav .mobile-pets:hover > svg {
+    background:var(--accent-dark);
+    color:var(--surface);
+    box-shadow:0 3px 12px #203c3240;
+  }
+}

@@ -21,6 +21,11 @@ with sync_playwright() as p:
         for link in links.all():
             rect=link.bounding_box(); assert rect['width']>=44 and rect['height']>=44
             assert rect['y']+rect['height']<=812
+        pets_link=page.locator('.nav .mobile-pets')
+        pets_link.hover()
+        expect(pets_link).to_have_css('background-color','rgba(0, 0, 0, 0)')
+        expect(pets_link.locator('.nav-label')).to_have_css('color','rgb(27, 73, 52)')
+        expect(pets_link.locator('svg')).to_have_css('color','rgb(255, 254, 250)')
         circle=page.locator('.mobile-pets svg').bounding_box()
         assert abs(circle['x']+circle['width']/2-width/2)<2
         page.screenshot(path=f'/tmp/petcare-menu-audit-{width}.png')
