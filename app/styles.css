@@ -4792,3 +4792,39 @@ h1,h2,h3 { text-wrap:balance; }
     box-shadow:0 3px 12px #203c3240;
   }
 }
+
+/* Local hierarchy experiment: daily actions first, settings on demand. */
+#today-panel { margin-bottom:24px; }
+#today-panel h2 { margin-top:0; }
+.settings-list { display:grid; gap:12px; }
+.settings-group { border:1px solid var(--line); border-radius:18px; background:var(--surface); overflow:hidden; }
+.settings-group > summary { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:20px; min-height:80px; font-size:16px; font-weight:650; cursor:pointer; list-style:none; }
+.settings-group > summary::-webkit-details-marker { display:none; }
+.settings-group > summary::after { content:'+'; font-size:24px; font-weight:400; color:var(--accent); }
+.settings-group[open] > summary::after { content:'−'; }
+.settings-group > summary small { display:block; font-size:13px; font-weight:400; color:var(--muted); margin-top:4px; }
+.settings-group > summary:hover { background:var(--bg); }
+.settings-body { padding:0 20px 20px; display:grid; gap:16px; }
+.settings-body .panel { margin:0; padding:0; border:0; box-shadow:none; background:transparent; }
+.settings-body > .btn { justify-self:start; min-height:44px; }
+.settings-body label:has(#email-reminders) { display:flex; align-items:center; gap:10px; }
+.settings-body label:has(#email-reminders) input { width:20px; min-height:20px; margin:0; }
+.settings-body .row.wrap { gap:10px; }
+#account-panel h2 { margin-top:0; }
+.pet-appearance { border-top:1px solid var(--line); margin-top:20px; padding:20px; display:grid; gap:16px; }
+.pet-appearance h3 { margin:0; }
+.pet-appearance .btn { justify-self:start; }
+.event-actions { align-items:flex-start; }
+.event-more { min-width:72px; }
+.event-more summary,.record-actions summary { cursor:pointer; min-height:44px; padding:10px 16px; border:1px solid var(--line); border-radius:10px; font-size:13px; font-weight:600; color:var(--ink); list-style:none; text-align:center; }
+.event-more summary::-webkit-details-marker,.record-actions summary::-webkit-details-marker { display:none; }
+.event-more summary:hover,.record-actions summary:hover { background:var(--soft); }
+.event-more-actions { display:grid; gap:8px; padding-top:8px; }
+.event-actions > .btn { min-height:44px; }
+.record-actions { margin-top:12px; width:fit-content; }
+.record-actions[open] > .btn { margin-top:8px; min-height:44px; }
+@media(max-width:600px) { .settings-group > summary { padding:18px; } .settings-body { padding:0 18px 18px; } }
+.settings-feedback { margin:0; padding:14px; background:var(--soft); border-radius:12px; line-height:1.6; scroll-margin-block:100px 120px; }
+@media(max-width:640px) {
+  #care-filters,#document-filters,#health-filters { flex-wrap:wrap; overflow:visible; }
+}

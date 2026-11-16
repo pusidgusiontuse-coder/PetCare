@@ -73,8 +73,8 @@
           <button class="btn primary" data-modal="pet" type="button">+ Добавить питомца</button>
         </div>
       </div>
-      <div id="pet-cards" class="pet-grid"></div>
       <section id="today-panel" class="panel glass" aria-labelledby="today-heading" hidden><h2 id="today-heading">Сегодня</h2><div id="today-overview"></div></section>
+      <div id="pet-cards" class="pet-grid"></div>
       <div class="directory-note">
         <svg aria-hidden="true"><use href="#heart"/></svg>
         <div>
@@ -92,7 +92,7 @@
           <h1>Здоровье</h1>
           <span class="subtle" id="health-pet-name"></span>
         </div>
-        <button class="btn primary" data-modal="health" type="button">+ Запись</button>
+        <button class="btn primary" data-modal="health" type="button">+ Добавить запись</button>
       </div>
       <details class="pet-profile-panel" id="health-pet-profile">
         <summary>
@@ -112,6 +112,7 @@
             <p id="health-profile-feedback" tabindex="-1" role="status" aria-live="polite"></p>
           </div>
         </form>
+        <div class="pet-appearance"><h3>Внешний вид карточки</h3><div id="avatar-preview"></div><button class="btn" data-extra-modal="avatar" type="button">Изменить аватар питомца</button></div>
       </details>
 
       <div class="panel glass">
@@ -157,7 +158,7 @@
           <h1>Питание</h1>
           <span class="subtle" id="nutrition-pet-name"></span>
         </div>
-        <div class="row nutrition-actions"><button class="btn" data-extra-modal="meal-plan" type="button">Настроить кормления</button><button class="btn primary" data-modal="nutrition" id="nutrition-add-food" type="button">+ Добавить корм</button></div>
+        <div class="row nutrition-actions"><button class="btn primary" data-extra-modal="meal-plan" type="button">Настроить кормления</button><button class="btn" data-modal="nutrition" id="nutrition-add-food" type="button">+ Добавить корм</button></div>
       </div>
       <div class="grid2">
         <div class="panel glass">
@@ -228,11 +229,7 @@
         </div>
         <div id="care-events" class="event-list"></div>
         <p class="notice">События сохраняются на сервере и видны всем участникам совместного ухода.</p>
-        <div class="push-controls-row">
-          <button class="btn tiny primary" id="enable-alerts" type="button">🔔 Включить пуш-уведомления</button>
-          <button class="btn tiny" id="test-push-btn" type="button">Проверить уведомление</button>
-          <span id="push-status-badge" class="push-status-pill off">Уведомления выключены</span>
-        </div>
+
       </div>
 
       <details class="secondary-details">
@@ -291,8 +288,8 @@
         <div id="document-list" class="record-list"></div>
       </div>
 
-      <details class="secondary-details food-tools document-ai" id="document-recognition" open>
-        <summary>Распознавание печатного текста</summary>
+      <details class="secondary-details food-tools document-ai" id="document-recognition">
+        <summary>Распознать текст с фото документа</summary>
         <div class="document-ai-body">
           <p class="document-ai-intro">Печатный текст на русском и английском. Фото обрабатывается на вашем устройстве и не отправляется сервисам распознавания. Рукописный текст пока не поддерживается. Даты, названия и дозировки сверяйте с оригиналом.</p>
           <label class="field" for="document-photo">Фото документа
@@ -460,42 +457,22 @@
         </div>
       </div>
 
-      <div class="grid2">
-        <div class="panel glass" id="account-panel">
-          <div class="panel-head">
-            <h2>Владелец</h2>
-          </div>
-          <div id="person-profile"></div>
-          <div class="api-actions" style="margin-top:16px">
-            <button class="btn" data-extra-modal="profile" id="btn-account-settings" type="button">Настройки аккаунта</button>
-            <button class="btn danger" id="api-logout" type="button">Выйти из аккаунта</button>
-            <button class="btn primary" id="btn-open-auth-modal" type="button" hidden>Войти в аккаунт</button>
-          </div>
+      <div class="panel glass" id="account-panel"><h2>Ваш аккаунт</h2><div id="person-profile"></div></div>
+      <div class="settings-list">
+        <details class="settings-group" id="settings-person"><summary><span>Личные данные<small>Имя, почта и часовой пояс</small></span></summary><div class="settings-body">
+          <div class="api-actions"><button class="btn" data-extra-modal="profile" id="btn-account-settings" type="button">Изменить данные</button><button class="btn danger" id="api-logout" type="button">Выйти из аккаунта</button><button class="btn primary" id="btn-open-auth-modal" type="button" hidden>Войти в аккаунт</button></div>
+        </div></details>
+        <details class="settings-group" id="settings-notifications"><summary><span>Уведомления<small>Расписание, тихие часы и способы доставки</small></span></summary><div class="settings-body" id="settings-notifications-body">
+          <div id="notification-settings"></div><button class="btn" data-extra-modal="settings" type="button">Настроить уведомления</button>
+        <div class="push-controls-row">
+          <button class="btn tiny primary" id="enable-alerts" type="button">🔔 Включить пуш-уведомления</button>
+          <button class="btn tiny" id="test-push-btn" type="button">Проверить уведомление</button>
+          <span id="push-status-badge" class="push-status-pill off">Уведомления выключены</span>
         </div>
-        <div class="panel glass">
-          <div class="panel-head">
-            <h2>Семья и совместный уход</h2>
-            <button class="btn tiny" data-extra-modal="member" type="button">+ Участник</button>
-          </div>
-          <div id="family-list" class="record-list"></div>
-        </div>
-      </div>
-
-      <div class="grid2">
-        <div class="panel glass">
-          <div class="panel-head">
-            <h2>Аватар питомца</h2>
-            <button class="btn tiny" data-extra-modal="avatar" type="button">Настроить</button>
-          </div>
-          <div id="avatar-preview"></div>
-        </div>
-        <div class="panel glass">
-          <div class="panel-head">
-            <h2>Уведомления</h2>
-            <button class="btn tiny" data-extra-modal="settings" type="button">Настроить</button>
-          </div>
-          <div id="notification-settings"></div>
-        </div>
+        </div></details>
+        <details class="settings-group" id="settings-sharing"><summary><span>Совместный доступ<small>Участники ухода и приглашения</small></span></summary><div class="settings-body" id="settings-sharing-body"><button class="btn" data-extra-modal="member" type="button">Добавить участника</button><div id="family-list" class="record-list"></div></div></details>
+        <details class="settings-group" id="settings-security"><summary><span>Безопасность<small>Пароль, почта, устройства и данные</small></span></summary><div class="settings-body" id="settings-security-body"></div></details>
+        <details class="settings-group" id="settings-app"><summary><span>Приложение<small>Установка и возможности аккаунта</small></span></summary><div class="settings-body" id="settings-app-body"></div></details>
       </div>
       <div id="undo-area"></div>
     </section>
@@ -1391,7 +1368,7 @@ function renderHealth() {
   document.querySelectorAll('[data-health-filter]').forEach(b => b.onclick = () => { healthFilter = b.dataset.healthFilter; renderHealth(); });
 
   const rows = state.health.filter(x => isForPet(x, p) && (healthFilter === 'all' || x.type === healthFilter)).sort((a, b) => b.date.localeCompare(a.date));
-  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record" data-health-record="' + esc(x.id) + '"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || 'Запись') + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && 'Клиника: ' + x.clinic, x.doctor && 'Врач: ' + x.doctor, x.result && 'Результат: ' + x.result, x.notes, x.nextDate && 'Следующая процедура: ' + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + '">Скачать вложение: ' + esc(x.attachment.name) + '</a>' : '') + '<button class="btn tiny ghost danger" type="button" data-del-health="' + esc(x.id) + '">Удалить</button></article>').join('') : '<p class="empty">Записей пока нет.</p>';
+  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record" data-health-record="' + esc(x.id) + '"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || 'Запись') + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && 'Клиника: ' + x.clinic, x.doctor && 'Врач: ' + x.doctor, x.result && 'Результат: ' + x.result, x.notes, x.nextDate && 'Следующая процедура: ' + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + '">Скачать вложение: ' + esc(x.attachment.name) + '</a>' : '') + '<details class="record-actions"><summary aria-label="Ещё: ' + esc(x.title || healthLabel[x.type] || 'Запись о здоровье') + '">Ещё</summary><button class="btn tiny ghost danger" type="button" data-del-health="' + esc(x.id) + '">Удалить</button></details></article>').join('') : '<p class="empty">Записей пока нет.</p>';
 
   $('health-records').querySelectorAll('[data-del-health]').forEach(btn => {
     btn.onclick = async () => {
@@ -1407,7 +1384,7 @@ function renderHealth() {
     };
   });
 
-  $('prescriptions').innerHTML = state.prescriptions.filter(x => isForPet(x, p)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(x => '<article class="record"><div class="record-title"><b>' + esc(x.name) + '</b><span class="type">' + esc(x.status || 'Активно') + '</span></div><p>' + esc(x.dose || 'Дозировка не указана') + ' · ' + esc(x.times || 'По назначению') + ' · ' + esc(x.duration || 'Курс') + '</p><time>С ' + esc(date(x.startDate)) + '</time><button class="btn tiny ghost danger" type="button" data-del-presc="' + esc(x.id) + '">Удалить</button></article>').join('') || '<p class="empty">Назначений пока нет.</p>';
+  $('prescriptions').innerHTML = state.prescriptions.filter(x => isForPet(x, p)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(x => '<article class="record"><div class="record-title"><b>' + esc(x.name) + '</b><span class="type">' + esc(x.status || 'Активно') + '</span></div><p>' + esc(x.dose || 'Дозировка не указана') + ' · ' + esc(x.times || 'По назначению') + ' · ' + esc(x.duration || 'Курс') + '</p><time>С ' + esc(date(x.startDate)) + '</time><details class="record-actions"><summary aria-label="Ещё: ' + esc(x.name) + '">Ещё</summary><button class="btn tiny ghost danger" type="button" data-del-presc="' + esc(x.id) + '">Удалить</button></details></article>').join('') || '<p class="empty">Назначений пока нет.</p>';
 
   $('prescriptions').querySelectorAll('[data-del-presc]').forEach(btn => {
     btn.onclick = async () => {
@@ -1740,7 +1717,7 @@ function renderCare() {
   document.querySelectorAll('[data-care-filter]').forEach(b => b.onclick = () => { careFilter = b.dataset.careFilter; renderCare(); });
 
   const active = state.events.filter(e => isForPet(e, p) && e.status === 'pending' && (careFilter === 'all' || reminderStatus(e) === careFilter || (careFilter === 'week' && ['today', 'tomorrow', 'week'].includes(reminderStatus(e))))).sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
-  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.type || 'Процедура') + (e.intervalDays ? ' · каждые ' + esc(e.intervalDays) + ' дн.' : '') + (e.intervalMonths ? ' · каждые ' + esc(e.intervalMonths) + ' мес.' : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="complete" aria-label="Готово — отметить выполненным: ' + esc(e.title) + '">Готово</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="skip" aria-label="Пропустить: ' + esc(e.title) + '">Пропустить</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="move" aria-label="Перенести: ' + esc(e.title) + '">Перенести</button></div></div>').join('') || '<p class="empty">Событий за выбранный период нет.</p>';
+  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.type || 'Процедура') + (e.intervalDays ? ' · каждые ' + esc(e.intervalDays) + ' дн.' : '') + (e.intervalMonths ? ' · каждые ' + esc(e.intervalMonths) + ' мес.' : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="complete" aria-label="Готово — отметить выполненным: ' + esc(e.title) + '">Готово</button><details class="event-more"><summary aria-label="Ещё: ' + esc(e.title) + '">Ещё</summary><div class="event-more-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="skip" aria-label="Пропустить: ' + esc(e.title) + '">Пропустить</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="move" aria-label="Перенести: ' + esc(e.title) + '">Перенести</button></div></details></div></div>').join('') || '<p class="empty">Событий за выбранный период нет.</p>';
   document.querySelectorAll('[data-care-event]').forEach(b => b.onclick = () => eventAction(b.dataset.careEvent, b.dataset.do));
 
   const history = state.events.filter(e => isForPet(e, p) && e.status !== 'pending').sort((a, b) => mskMoment(b.completedAt || b.at) - mskMoment(a.completedAt || a.at)), expanded = expandedHistoryPet === p.id;
@@ -1822,7 +1799,7 @@ function renderDocuments() {
 
   const search = $('document-search').value.trim().toLocaleLowerCase('ru');
   const matches = d => [d.title, d.file?.name, d.date, date(d.date), ({passport:'Паспорт',conclusion:'Заключение',prescription:'Назначение',other:'Другое'})[d.type]].join(' ').toLocaleLowerCase('ru').includes(search);
-  $('document-list').innerHTML = [...standalone, ...fromHealth].filter(matches).sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: 'Паспорт', conclusion: 'Заключение', prescription: 'Назначение', other: 'Другое' })[d.type] || 'Документ') + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + '">Открыть · ' + esc(d.file.name || 'файл') + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '<button class="btn tiny" type="button" data-linked-health="' + esc(d.id) + '">Открыть медицинскую запись</button>' : '<button class="btn tiny danger" type="button" data-remove-doc="' + esc(d.id) + '">Удалить</button>') + '</div>').join('') || '<p class="empty">Документов не найдено. Измените поиск или категорию, либо добавьте документ.</p>';
+  $('document-list').innerHTML = [...standalone, ...fromHealth].filter(matches).sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: 'Паспорт', conclusion: 'Заключение', prescription: 'Назначение', other: 'Другое' })[d.type] || 'Документ') + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + '">Открыть · ' + esc(d.file.name || 'файл') + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '<button class="btn tiny" type="button" data-linked-health="' + esc(d.id) + '">Открыть медицинскую запись</button>' : '<details class="record-actions"><summary aria-label="Ещё: ' + esc(d.title || d.file?.name || 'Документ') + '">Ещё</summary><button class="btn tiny danger" type="button" data-remove-doc="' + esc(d.id) + '">Удалить</button></details>') + '</div>').join('') || '<p class="empty">Документов не найдено. Измените поиск или категорию, либо добавьте документ.</p>';
 
   document.querySelectorAll('[data-linked-health]').forEach(b => b.onclick = () => { healthFilter = 'all'; show('health'); const record = [...$('health-records').children].find(el => el.dataset.healthRecord === b.dataset.linkedHealth); if (record) { record.tabIndex = -1; record.scrollIntoView({block:'center'}); record.focus(); } });
   document.querySelectorAll('[data-remove-doc]').forEach(b => b.onclick = async () => {
@@ -2245,7 +2222,7 @@ if ($('match-profile-form')) {
 // PROFILE & JOINT CARE SECTION
 function renderProfile() {
   const u = state.user, p = pet(), set = state.settings;
-  $('person-profile').innerHTML = '<div class="profile-data"><strong>' + esc(u.name || 'Владелец') + '</strong><br>' + esc(u.email || 'Почта не указана') + '<br>Часовой пояс: Москва (UTC+3)</div>';
+  $('person-profile').innerHTML = '<div class="profile-data"><strong>' + esc(u.name || 'Владелец') + '</strong><br>' + esc(u.email || 'Почта не указана') + '<br>Часовой пояс: ' + esc(u.timezone || 'Europe/Moscow') + '</div>';
 
   if (!p) {
     $('family-list').innerHTML = '<p class="empty">Сначала добавьте питомца или подключитесь по коду.</p>';
@@ -2304,18 +2281,8 @@ function renderProfile() {
       'Часовой пояс: <strong>Europe/Moscow</strong><br>' +
       'Тихие часы: ' + (set.quietEnabled ? esc(set.quietStart) + '–' + esc(set.quietEnd) : 'выключены') + '<br>' +
       'Типы: ' + esc(set.types.join(', ') || 'не выбраны') +
-    '</div>' +
-    '<div class="push-controls-row">' +
-      '<button class="btn tiny ' + (pushActive ? '' : 'primary') + '" id="profile-toggle-push" type="button">' + (pushActive ? 'Отключить уведомления' : '🔔 Включить уведомления') + '</button>' +
-      '<button class="btn tiny" id="profile-test-push" type="button">Проверить пуш</button>' +
     '</div>';
 
-  if ($('profile-toggle-push')) {
-    $('profile-toggle-push').onclick = () => togglePushNotifications();
-  }
-  if ($('profile-test-push')) {
-    $('profile-test-push').onclick = () => triggerTestPushNotification();
-  }
   updatePushStatusUI();
 
   $('undo-area').innerHTML = lastChange && Date.now() - lastChange.at < 300000 ? '<div class="panel glass"><h2>Последнее действие</h2><button class="btn tiny" id="undo-last" type="button">Отменить ' + (lastChange.kind === 'document' ? 'удаление документа' : 'отметку события') + '</button></div>' : '';

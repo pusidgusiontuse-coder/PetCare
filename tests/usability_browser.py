@@ -62,10 +62,13 @@ with sync_playwright() as p:
     expect(field).to_have_value(original_name)
     page.get_by_role('link',name='Здоровье',exact=True).click()
     before=page.locator('[data-del-health]').count()
+    page.locator('#health-records .record-actions summary').first.click()
     page.once('dialog',lambda d:d.dismiss())
     page.locator('[data-del-health]').first.click()
     assert page.locator('[data-del-health]').count()==before
     page.route('**/api/v1/health-records/*',lambda route:route.fulfill(status=500,json={'detail':'Тестовая ошибка удаления'}))
+    if not page.locator('[data-del-health]').first.is_visible():
+        page.locator('#health-records .record-actions summary').first.click()
     page.once('dialog',lambda d:d.accept())
     page.locator('[data-del-health]').first.click()
     expect(page.locator('#toast')).to_contain_text('Не удалось удалить')

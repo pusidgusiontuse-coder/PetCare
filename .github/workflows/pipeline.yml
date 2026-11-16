@@ -65,6 +65,7 @@ jobs:
           python tests/forms_browser.py
           python tests/wheels_browser.py
           python tests/usability_browser.py
+          python tests/hierarchy_browser.py
       - name: Upload interface diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

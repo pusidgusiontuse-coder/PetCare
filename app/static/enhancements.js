@@ -10,7 +10,13 @@ featureRoot.innerHTML=`<h2>Безопасность и приложение</h2>
 <button type="button" class="btn" id="export-account">Скачать свои данные</button></div>
 <p id="email-status"></p><p id="plan-status"></p><label><input type="checkbox" id="email-reminders"> Получать напоминания по почте</label><p><button type="button" class="btn primary" id="install-petcare">Установить PetCare</button> <button type="button" class="btn" id="subscribe-push">Уведомления при закрытом сайте</button></p>
 <div id="session-list"></div><div id="server-members"></div><p id="feature-feedback" role="status"></p>`;
-document.querySelector('#profile')?.append(featureRoot);
+document.querySelector('#settings-security-body')?.append(featureRoot);
+const appBody=document.getElementById('settings-app-body');
+appBody.append(document.getElementById('plan-status'), document.getElementById('install-petcare'));
+const notificationBody=document.getElementById('settings-notifications-body');
+notificationBody.append(document.getElementById('email-reminders').closest('label'),document.getElementById('subscribe-push'));
+document.getElementById('settings-sharing-body').append(document.getElementById('server-members'));
+featureRoot.querySelector('h2').textContent='Доступ и данные';
 const securityDialog=document.createElement('dialog'); securityDialog.id='security-dialog';
 securityDialog.innerHTML=`<form id="security-form" class="panel"><h2 id="security-title">Подтверждение</h2><p id="security-info">Код действует 10 минут.</p>
 <label class="field" id="security-current-wrap">Текущий пароль<input type="password" id="security-current" autocomplete="current-password"></label>
@@ -20,7 +26,14 @@ securityDialog.innerHTML=`<form id="security-form" class="panel"><h2 id="securit
 <p id="security-error" role="alert"></p><div class="row"><button class="btn primary" id="security-submit">Получить код</button><button class="btn" type="button" id="security-resend" hidden>Отправить ещё раз</button><button class="btn" type="button" id="security-close">Закрыть</button></div></form>`;
 document.body.append(securityDialog);
 let securityPurpose='',securityChallenge='',securityResendAt=0;
-const feedback=(text)=>{$('feature-feedback').textContent=text;};
+const feedback=(text)=>{
+ const group=document.activeElement?.closest('.settings-group');
+ if(!group){notify(text);return;}
+ const body=group.querySelector('.settings-body');
+ let message=body.querySelector(':scope > .settings-feedback');
+ if(!message){message=document.createElement('p');message.className='settings-feedback';message.setAttribute('role','status');body.append(message);}
+ message.textContent=text;message.scrollIntoView({block:'nearest'});
+};
 function acceptSession(result){authToken=result.access_token; localStorage.setItem(STORAGE_AUTH_KEY,authToken); localStorage.removeItem('petcare-logged-out'); state.user={id:result.user.id,name:result.user.full_name,email:result.user.email,timezone:result.user.timezone};}
 function openSecurity(purpose,challenge=''){
  securityPurpose=purpose;securityChallenge=challenge; securityResendAt=Date.now()+60000;
@@ -71,7 +84,7 @@ const adminPanel=document.createElement('section');adminPanel.className='panel';
 adminPanel.innerHTML='<h2>Администрирование</h2><div id="admin-stats"></div><label class="field">Поиск по имени или почте<input id="admin-search" type="search"></label><button type="button" class="btn" id="admin-refresh">Показать пользователей</button><div id="admin-users"></div><button type="button" class="btn" id="admin-next">Следующая страница</button><button type="button" class="btn" id="admin-audit-button">Журнал действий</button><div id="admin-audit"></div>';featureRoot.after(adminPanel);
 let adminOffset=0;
 async function loadAdmin(){
- const me=await apiFetch('/auth/me');$('plan-status').textContent=me.premium?'Расширенный доступ: ИИ и больше трёх питомцев.':'Бесплатный доступ: до трёх питомцев. ИИ доступен в платной версии; доступ выдаёт администратор.';$('email-reminders').checked=Boolean(state.settings.emailEnabled);$('email-status').textContent=me.email_verified?'Почта подтверждена':'Подтвердите почту для восстановления доступа. Администратору сначала нужно указать настоящую почту через «Изменить почту».';
+ const me=await apiFetch('/auth/me');featureRoot.querySelector('[data-security=verify_email]').hidden=Boolean(me.email_verified);$('plan-status').textContent=me.premium?'Расширенный доступ: ИИ и больше трёх питомцев.':'Бесплатный доступ: до трёх питомцев. ИИ доступен в платной версии; доступ выдаёт администратор.';$('email-reminders').checked=Boolean(state.settings.emailEnabled);$('email-status').textContent=me.email_verified?'Почта подтверждена':'Подтвердите почту для восстановления доступа. Администратору сначала нужно указать настоящую почту через «Изменить почту».';
  adminPanel.hidden=!me.is_admin;if(!me.is_admin)return;
  const stats=await apiFetch('/admin/status');$('admin-stats').textContent=`Пользователей: ${stats.users}, питомцев: ${stats.pets}, документов: ${stats.documents}. Почта: ${stats.smtp_configured?'подключена':'не подключена'}, ИИ: ${stats.ocr_configured?'подключён':'нужен API-ключ'}, Push: ${stats.push_configured?'ключи созданы':'не настроен'}.`;
  const r=await apiFetch('/admin/users?offset='+adminOffset+'&search='+encodeURIComponent($('admin-search').value));
