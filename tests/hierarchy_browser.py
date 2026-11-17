@@ -15,7 +15,8 @@ with sync_playwright() as p:
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(BASE);page.wait_for_load_state('networkidle');page.evaluate('syncServerData(true)')
         page.evaluate("show('pets')")
-        assert page.locator('#today-panel').bounding_box()['y'] < page.locator('#pet-cards').bounding_box()['y']
+        assert page.locator('#pet-cards').bounding_box()['y'] < page.locator('#today-panel').bounding_box()['y']
+        assert page.locator('#today-panel').bounding_box()['y'] < page.locator('#tomorrow-panel').bounding_box()['y']
         page.evaluate("show('care')")
         expect(page.locator('#care #enable-alerts')).to_have_count(0)
         expect(page.locator('#care [data-do=skip]').first).to_be_hidden()
