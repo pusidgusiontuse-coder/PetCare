@@ -31,11 +31,17 @@ def test_sqlite_to_mysql_preserves_values_and_large_files(tmp_path):
             connection.execute(models.Pet.__table__.insert().values(id=42,owner_id=41,name='Барсик',species='Кошка'))
             connection.execute(models.WeightRecord.__table__.insert().values(pet_id=42,date=date(2026,11,17),kg=4.123456789))
             connection.execute(models.Document.__table__.insert().values(pet_id=42,title='Большой документ',date=date(2026,11,17),file_data='x'*(2*1024*1024)))
+        with source.begin() as connection:
+            connection.exec_driver_sql('ALTER TABLE users DROP COLUMN email_verified')
+            connection.exec_driver_sql('DROP TABLE login_sessions')
         source.dispose()
-        report=transfer(path,target)
+        before=path.read_bytes()
+        report=transfer(path,target,legacy_regru=True)
+        assert path.read_bytes()==before
         assert report['users']['rows']==1
         with target.begin() as connection:
             assert connection.scalar(select(models.User.created_at))==stamp
+            assert connection.scalar(select(models.User.email_verified)) is False
             assert len(connection.scalar(select(models.Document.file_data)))==2*1024*1024
             assert connection.scalar(select(models.WeightRecord.kg))==4.123456789
             created=connection.execute(models.User.__table__.insert().values(full_name='Новый',email='next@example.test',hashed_password='hash'))

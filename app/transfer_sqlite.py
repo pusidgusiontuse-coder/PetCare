@@ -1,4 +1,4 @@
-"""Copy a stopped SQLite database to an empty, migrated PostgreSQL database.
+"""Copy a stopped SQLite database to an empty, migrated PostgreSQL or MySQL database.
 
 Run from repository root: python app/transfer_sqlite.py /private/backup.db
 DATABASE_URL supplies the destination; never pass credentials on the command line.
@@ -110,14 +110,57 @@ def copy_snapshot(snapshot, destination):
         source_engine.dispose()
 
 
-def transfer(source_path, destination=None):
+# Only fields introduced since the REG.RU SQLite release may be synthesized.
+LEGACY_COLUMNS = {
+    'users': {
+        'disabled': 'BOOLEAN NOT NULL DEFAULT 0',
+        'email_verified': 'BOOLEAN NOT NULL DEFAULT 0',
+        'is_admin': 'BOOLEAN NOT NULL DEFAULT 0',
+        'premium_permanent': 'BOOLEAN NOT NULL DEFAULT 0',
+        'premium_until': 'DATETIME',
+        'token_version': 'INTEGER NOT NULL DEFAULT 0',
+    },
+    'pet_members': {'expires_at': 'DATETIME'},
+    'match_profiles': {'photos': 'JSON'},
+    'reminders': {'prescription_id': 'INTEGER REFERENCES prescriptions(id)'},
+}
+LEGACY_NEW_TABLES = {
+    'admin_audit', 'delivery_receipts', 'email_challenges', 'login_sessions',
+    'notification_preferences', 'push_subscriptions', 'recovery_actions', 'request_quotas',
+}
+
+
+def normalize_legacy_snapshot(snapshot):
+    """Extend only the disposable copy of a recognized older PetCare schema."""
+    engine = create_engine(URL.create('sqlite', database=str(snapshot)))
+    try:
+        with engine.begin() as connection:
+            inspector = inspect(connection)
+            existing = set(inspector.get_table_names()) - {'alembic_version'}
+            current = models.Base.metadata.tables
+            if existing - set(current) or set(current) - existing - LEGACY_NEW_TABLES:
+                raise TransferError('Unrecognized legacy table layout')
+            for name in sorted(existing):
+                old_columns = {column['name'] for column in inspector.get_columns(name)}
+                new_columns = set(current[name].c.keys())
+                allowed = LEGACY_COLUMNS.get(name, {})
+                if old_columns - new_columns or new_columns - old_columns - set(allowed):
+                    raise TransferError(f'Unrecognized legacy columns in {name}')
+                for column in sorted(new_columns - old_columns):
+                    connection.exec_driver_sql(f'ALTER TABLE "{name}" ADD COLUMN "{column}" {allowed[column]}')
+            models.Base.metadata.create_all(connection, tables=[current[name] for name in sorted(set(current) - existing)])
+    finally:
+        engine.dispose()
+
+
+def transfer(source_path, destination=None, *, legacy_regru=False):
     if destination is None:
         load_dotenv(os.environ.get('PETCARE_ENV_FILE', Path(__file__).resolve().parent / '.env'))
         url = os.environ.get('MIGRATION_DATABASE_URL') or os.environ.get('DATABASE_URL')
         if not url or os.getenv('APP_ENV') == 'production' and not os.environ.get('MIGRATION_DATABASE_URL'):
             raise TransferError('Use a separate migration environment with MIGRATION_DATABASE_URL')
         migration_engine = create_engine(validate_url(url, os.getenv('APP_ENV') == 'production'), hide_parameters=True)
-        try: return transfer(source_path, migration_engine)
+        try: return transfer(source_path, migration_engine, legacy_regru=legacy_regru)
         finally: migration_engine.dispose()
     if destination.dialect.name not in {'postgresql','mysql'}:
         raise TransferError('Destination must be PostgreSQL or MySQL')
@@ -135,15 +178,18 @@ def transfer(source_path, destination=None):
                     raise TransferError('SQLite integrity check failed')
                 if backup.execute('PRAGMA foreign_key_check').fetchone():
                     raise TransferError('SQLite contains broken foreign keys; fix a COPY before transfer')
+        if legacy_regru:
+            normalize_legacy_snapshot(snapshot)
         return copy_snapshot(snapshot, destination)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
+    parser.add_argument('--legacy-regru', action='store_true', help='Extend known legacy fields on a disposable snapshot')
     args = parser.parse_args()
     try:
-        report = transfer(args.source)
+        report = transfer(args.source, legacy_regru=args.legacy_regru)
     except Exception as exc:
         # Driver errors can contain passwords, email addresses and document data.
         detail = str(exc) if isinstance(exc, TransferError) else type(exc).__name__
