@@ -365,7 +365,10 @@ def install_features(app):
 
     @router.post('/notifications/subscribe')
     def subscribe(data:dict,u=Depends(get_current_user),db=Depends(get_db)):
-        endpoint=data.get('endpoint',''); parsed=urlparse(endpoint)
+        endpoint = data.get('endpoint', '')
+        if not isinstance(endpoint, str) or len(endpoint) > 768:
+            raise HTTPException(422, 'Неверная push-подписка')
+        parsed=urlparse(endpoint)
         # Fixed provider allowlist prevents outbound requests to arbitrary/internal hosts.
         allowed=parsed.hostname and (parsed.hostname=='fcm.googleapis.com' or parsed.hostname.endswith('.push.services.mozilla.com') or parsed.hostname=='updates.push.services.mozilla.com' or parsed.hostname.endswith('.push.apple.com'))
         keys=data.get('keys',{})

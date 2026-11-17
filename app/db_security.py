@@ -12,7 +12,7 @@ def assert_runtime_permissions(engine):
                 raise RuntimeError('MySQL runtime role must have data-only privileges')
             privileges = set(item.strip() for item in grant[6:].split(' ON ',1)[0].split(','))
             scope = grant.split(' ON ',1)[1].split(' TO ',1)[0].replace('`','')
-            if scope != engine.url.database + '.*' and not (scope == '*.*' and privileges == {'USAGE'}):
+            if scope != engine.url.database.upper() + '.*' and not (scope == '*.*' and privileges == {'USAGE'}):
                 raise RuntimeError('MySQL runtime grants must be limited to the application database')
             if not privileges.issubset(allowed):
                 raise RuntimeError('MySQL runtime role must have only SELECT, INSERT, UPDATE, DELETE privileges')

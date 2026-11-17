@@ -1,9 +1,9 @@
 from datetime import datetime, date
-from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text, JSON
+from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text as SQLText, JSON
 from sqlalchemy.dialects.mysql import MEDIUMTEXT, DATETIME, DOUBLE
 from sqlalchemy.orm import relationship
 
-Text = Text().with_variant(MEDIUMTEXT(), "mysql")
+Text = SQLText().with_variant(MEDIUMTEXT(), "mysql")
 DateTime = DateTime().with_variant(DATETIME(fsp=6), "mysql")
 Float = Float().with_variant(DOUBLE(asdecimal=False), "mysql")
 from model_base import Base
@@ -320,7 +320,7 @@ class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    endpoint = Column(Text, nullable=False, unique=True)
+    endpoint = Column(SQLText().with_variant(String(768, collation="utf8mb4_bin"), "mysql"), nullable=False, unique=True)
     data = Column(Text, nullable=False)
 
 class DeliveryReceipt(Base):

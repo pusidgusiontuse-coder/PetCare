@@ -111,7 +111,7 @@ def upgrade():
     op.create_table('push_subscriptions',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('endpoint', sa.Text(), nullable=False),
+    sa.Column('endpoint', sa.Text().with_variant(sa.String(768, collation='utf8mb4_bin'), 'mysql'), nullable=False),
     sa.Column('data', sa.Text(), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id'),
