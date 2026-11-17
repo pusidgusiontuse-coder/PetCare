@@ -39,7 +39,7 @@ if not private_env.exists():
 (ROOT / 'data').mkdir(mode=0o700, exist_ok=True)
 # Schema/data migration and PostgreSQL backup are explicit deployment steps.
 # Never create an empty SQLite replacement for an existing installation.
-subprocess.run([str(python), '-c', 'from settings import DATABASE_URL; from sqlalchemy.engine import make_url; assert make_url(DATABASE_URL).get_backend_name() == "postgresql", "Configure PostgreSQL first; see docs/POSTGRESQL.md"'], cwd=ROOT / 'app', check=True)
+subprocess.run([str(python), '-c', 'from settings import DATABASE_URL; from sqlalchemy.engine import make_url; assert make_url(DATABASE_URL).get_backend_name() in {"postgresql", "mysql"}, "Configure a production database first"'], cwd=ROOT / 'app', check=True)
 # Keep the VAPID identity stable across updates.
 if 'VAPID_PRIVATE_KEY=' not in private_env.read_text():
     result=subprocess.run([str(python),'-c', 'from cryptography.hazmat.primitives.asymmetric import ec; from cryptography.hazmat.primitives import serialization; import base64,json; k=ec.generate_private_key(ec.SECP256R1()); enc=lambda x:base64.urlsafe_b64encode(x).rstrip(b"=").decode(); print(json.dumps([enc(k.private_numbers().private_value.to_bytes(32,"big")),enc(k.public_key().public_bytes(serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))]))'],capture_output=True,text=True,check=True)

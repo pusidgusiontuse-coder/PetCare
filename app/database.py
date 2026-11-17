@@ -8,8 +8,8 @@ from settings import DATABASE_URL, validate_database_url
 def create_database_engine(url):
     url = validate_database_url(url)
     dialect = make_url(url).get_backend_name()
-    if dialect not in {"postgresql", "sqlite"}:
-        raise ValueError("Only PostgreSQL and SQLite (migration/tests) are supported")
+    if dialect not in {"postgresql", "mysql", "sqlite"}:
+        raise ValueError("Only PostgreSQL, MySQL and SQLite (migration/tests) are supported")
     options = {"pool_pre_ping": True}
     if dialect == "sqlite":
         options["connect_args"] = {"check_same_thread": False, "timeout": 30}

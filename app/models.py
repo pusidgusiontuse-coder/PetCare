@@ -1,6 +1,11 @@
 from datetime import datetime, date
 from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text, JSON
+from sqlalchemy.dialects.mysql import MEDIUMTEXT, DATETIME, DOUBLE
 from sqlalchemy.orm import relationship
+
+Text = Text().with_variant(MEDIUMTEXT(), "mysql")
+DateTime = DateTime().with_variant(DATETIME(fsp=6), "mysql")
+Float = Float().with_variant(DOUBLE(asdecimal=False), "mysql")
 from model_base import Base
 
 class User(Base):

@@ -53,6 +53,9 @@ def database_manifest(connection, schema):
 
 
 def dump_database(url, target, *, schema='public', manifest_path=None):
+    if make_url(url).get_backend_name() == 'mysql':
+        from mysql_backup import dump_mysql
+        return dump_mysql(url, target, manifest_path)
     target = Path(target)
     engine = create_engine(validate_url(url, os.getenv('APP_ENV') == 'production'), hide_parameters=True)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -86,6 +89,9 @@ def file_digest(path):
 
 
 def verify_restore(url, dump, manifest):
+    if make_url(url).get_backend_name() == 'mysql':
+        from mysql_backup import restore_mysql
+        return restore_mysql(url, dump, manifest)
     parsed = make_url(url)
     if not (parsed.database or '').startswith('petcare_restore_'):
         raise ValueError('Restore target database name must start with petcare_restore_')
@@ -124,7 +130,7 @@ def main():
         raise SystemExit('BACKUP_DATABASE_URL is required; use a separate read-only backup role')
     try: dump_database(url, args.target, schema=os.getenv('PG_APP_SCHEMA', 'public'))
     except Exception as exc: raise SystemExit('Backup failed: ' + type(exc).__name__) from None
-    print('Private PostgreSQL backup saved')
+    print('Private database backup saved')
 
 
 if __name__ == '__main__': main()

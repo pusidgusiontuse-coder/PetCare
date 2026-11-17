@@ -36,6 +36,7 @@ def digest_rows(connection, table, columns):
 
 
 def reset_sequences(connection, tables):
+    if connection.dialect.name == 'mysql': return  # Explicit integer inserts advance AUTO_INCREMENT.
     quote = connection.dialect.identifier_preparer.quote
     for table in tables:
         for column in table.primary_key:
@@ -68,9 +69,13 @@ def copy_snapshot(snapshot, destination):
         if unknown:
             raise TransferError('Unknown source tables; review schema before transfer: ' + ', '.join(sorted(unknown)))
         with source_engine.connect() as source, destination.begin() as target:
-            target.execute(text("SET LOCAL lock_timeout = '10s'"))
+            if target.dialect.name == 'postgresql':
+                target.execute(text("SET LOCAL lock_timeout = '10s'"))
             quote = target.dialect.identifier_preparer.quote
-            target.execute(text('LOCK TABLE ' + ', '.join(quote(t.name) for t in tables) + ' IN ACCESS EXCLUSIVE MODE'))
+            if target.dialect.name == 'postgresql':
+                target.execute(text('LOCK TABLE ' + ', '.join(quote(t.name) for t in tables) + ' IN ACCESS EXCLUSIVE MODE'))
+            elif target.dialect.name == 'mysql':
+                target.execute(text("SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'"))
             for table in tables:
                 if target.scalar(select(func.count()).select_from(table)):
                     raise TransferError('Destination is not empty; use a new database')
@@ -114,8 +119,8 @@ def transfer(source_path, destination=None):
         migration_engine = create_engine(validate_url(url, os.getenv('APP_ENV') == 'production'), hide_parameters=True)
         try: return transfer(source_path, migration_engine)
         finally: migration_engine.dispose()
-    if destination.dialect.name != 'postgresql':
-        raise TransferError('Destination must be PostgreSQL')
+    if destination.dialect.name not in {'postgresql','mysql'}:
+        raise TransferError('Destination must be PostgreSQL or MySQL')
     source_path = Path(source_path).expanduser().resolve(strict=True)
     check_schema(destination)
     # SQLite backup API includes committed WAL pages; original file stays read-only.
