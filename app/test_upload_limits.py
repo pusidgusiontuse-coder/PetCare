@@ -60,3 +60,30 @@ def test_profile_uses_avatar_and_replacement_does_not_change_pet(client, profile
     assert animal_after['photo_file_id'] == avatar
     # Saving text only retains the chosen profile photo.
     assert client.post(url, headers=headers, json=payload).json()['photo'] == replacement
+
+
+def test_profile_gallery_roundtrip_and_clear(client):
+    headers=user()[2]; animal=pet(client,headers)
+    url=f"/api/v1/pets/{animal['id']}/match-profile"
+    payload={'name':'Барсик','species':'Кошка','owner_contact':'@demo','photos':[photo_url('green'),photo_url('blue')]}
+    result=client.post(url,headers=headers,json=payload)
+    assert result.status_code==200,result.text[:200]
+    assert result.json()['photos']==payload['photos']
+    assert result.json()['photo']==payload['photos'][0]
+    assert client.get(f"/api/v1/pets/{animal['id']}/match-data",headers=headers).json()['my_profile']['photos']==payload['photos']
+    assert client.post(url,headers=headers,json={**payload,'photos':[]}).json()['photos']==[]
+    assert client.post(url,headers=headers,json={**payload,'photos':payload['photos']*3}).status_code==422
+
+
+def test_prescription_generates_dated_care_reminders(client):
+    headers=user()[2]; animal=pet(client,headers)
+    result=client.post(f"/api/v1/pets/{animal['id']}/prescriptions",headers=headers,json={
+        'name':'Учебный препарат','dose':'По указанию врача','start_date':'2026-11-18','duration':'3 дня','times':'09:00, 21:00','status':'Активно'})
+    assert result.status_code==201,result.text
+    rows=client.get('/api/v1/reminders',headers=headers).json()
+    rows=[row for row in rows if row['pet_id']==animal['id']]
+    assert len(rows)==6
+    assert all(row['reminder_type']=='Препарат' for row in rows)
+    assert sorted(row['at'] for row in rows)[-1]=='2026-11-20T21:00:00+03:00'
+    assert client.delete('/api/v1/prescriptions/'+str(result.json()['id']),headers=headers).status_code==204
+    assert not [row for row in client.get('/api/v1/reminders',headers=headers).json() if row['pet_id']==animal['id']]

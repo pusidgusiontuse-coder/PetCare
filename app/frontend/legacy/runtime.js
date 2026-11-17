@@ -680,6 +680,7 @@ function render() {
 
   if (!current) {
     $('today-panel').hidden = true;
+    $('tomorrow-panel').hidden = true;
     if (!['pets', 'profile'].includes(page)) page = 'pets';
     document.querySelectorAll('.section').forEach(section => section.classList.toggle('active', section.id === page));
     $('pet-cards').innerHTML = '<p class="empty">Пока нет питомцев. Нажмите «+ Добавить питомца», чтобы создать карточку или подключиться по коду совместного ухода.</p>';
@@ -706,8 +707,13 @@ function renderPetDirectory() {
   const pending = id => state.events.filter(e => String(e.petId) === String(id) && e.status === 'pending').sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
   const selected = pet();
   $('today-panel').hidden = false;
+  $('tomorrow-panel').hidden = false;
   const todayEvents = pending(selected.id).filter(e => mskDay(mskMoment(e.at)) === mskDay());
   const meals = dailyMealsForPet(selected.id);
+  const tomorrow = mskDay(new Date(Date.now()+86400000));
+  const next = pending(selected.id).filter(e => mskDay(mskMoment(e.at)) === tomorrow);
+  $('tomorrow-summary').textContent = next.length ? 'Запланировано: ' + next.length + ' · ' + next[0].title : 'Процедур нет · кормлений: ' + meals.length;
+  $('tomorrow-overview').innerHTML = (next.length ? next.map(e=>'<p><a class="doc-link" href="'+esc(routeHash('care'))+'">'+esc(e.title)+' · '+esc(mskLabel(e.at))+'</a></p>').join('') : '<p class="small">На завтра процедур нет.</p>') + (meals.length ? '<p>Кормлений: '+meals.length+'</p>' : '');
   $('today-overview').innerHTML = '<p>' + esc(selected.name) + ' · расписание по Москве</p>' +
     (todayEvents.length ? todayEvents.slice(0, 3).map(e => '<p><a class="doc-link" href="' + esc(routeHash('care')) + '">' + esc(e.title) + ' · ' + esc(mskLabel(e.at)) + '</a></p>').join('') : '<p class="small">На сегодня процедур нет.</p>') +
     (meals.length ? '<a class="doc-link" href="' + esc(routeHash('nutrition')) + '">Кормления на сегодня: ' + meals.length + ' · открыть расписание</a>' : '');
@@ -1254,7 +1260,7 @@ function populateMatchFormFromPet(forceFromPetCard = false) {
   form.elements.namedItem('owner_name').value = existing?.owner_name || state.user.name || '';
   form.elements.namedItem('owner_contact').value = existing?.owner_contact || '';
   form.elements.namedItem('bio').value = existing?.bio || p.notes || '';
-  matchPhotoPicker.setPhoto(existing?.photo || p.photo || '');
+  window.dispatchEvent(new CustomEvent('petcare:profile-photos', {detail: existing?.photos ?? [existing?.photo || p.photo].filter(Boolean)}));
   form.dataset.petId = String(p.id);
   form.dataset.dirty = 'false';
 }
@@ -1275,7 +1281,7 @@ function renderTinderCardHTML(candidate, mode = 'discover') {
       (candidate.liked_me || mode === 'incoming'
         ? '<span class="match-liked-you-pill">' + (candidate.is_mutual ? '♥ Взаимный лайк!' : '♥ Лайкнул(а) вашего питомца!') + '</span>'
         : '') +
-      '<div class="match-tinder-art">' + artHtml + '</div>' +
+      '<div class="match-tinder-art">' + artHtml + '</div>' + ((candidate.photos || []).length > 1 ? '<div class="candidate-gallery">'+candidate.photos.map((photo,index)=>'<button type="button" data-gallery-photo="'+esc(photo)+'" aria-label="Фото '+(index+1)+'"><img src="'+esc(photo)+'" alt="Фото '+(index+1)+'"></button>').join('')+'</div>' : '') +
     '</div>' +
     '<div class="match-tinder-body">' +
       '<div class="match-tinder-head">' +
@@ -1329,6 +1335,7 @@ async function handleMatchDecision(profileId, decision) {
 
 function wireMatchCardEvents(container) {
   if (!container) return;
+  container.querySelectorAll('[data-gallery-photo]').forEach(button => button.onclick = () => { const image = button.closest('article').querySelector('.match-tinder-art img'); if(image) image.src = button.dataset.galleryPhoto; });
   container.querySelectorAll('[data-swipe-action]').forEach(btn => {
     btn.onclick = () => handleMatchDecision(btn.dataset.profileId, btn.dataset.swipeAction);
   });
@@ -1514,7 +1521,7 @@ function renderMatch() {
   }
 }
 
-const matchPhotoPicker = bindFilePicker($('match-photo-input').closest('[data-file-picker]'));
+window.addEventListener('petcare:gallery-change', () => { $('match-profile-form').dataset.dirty = 'true'; });
 
 if ($('match-profile-form')) {
   ['input', 'change'].forEach(type => $('match-profile-form').addEventListener(type, () => { $('match-profile-form').dataset.dirty = 'true'; }));
@@ -1524,20 +1531,11 @@ if ($('match-profile-form')) {
     if (!p || !p.serverId) return;
     const form = event.currentTarget;
     const raw = Object.fromEntries(new FormData(form));
-    const photoFile = $('match-photo-input')?.files?.[0];
-    let photoData = null;
-    const feedback = $('match-profile-feedback');
-    feedback.textContent = '';
-    if (photoFile) {
-      const error = uploadError(photoFile, 'photo');
-      if (error) { feedback.textContent = error; return; }
-    }
-
+    $('match-profile-feedback').textContent = '';
     const submitBtn = $('btn-save-match-profile');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Сохраняем в базу…';
     try {
-      if (photoFile) photoData = await readUpload(photoFile);
       await apiFetch('/pets/' + p.serverId + '/match-profile', {
         method: 'POST',
         body: JSON.stringify({
@@ -1553,7 +1551,7 @@ if ($('match-profile-form')) {
           owner_name: String(raw.owner_name || state.user.name || 'Владелец').trim(),
           owner_contact: String(raw.owner_contact || '').trim(),
           bio: String(raw.bio || '').trim(),
-          ...(photoData ? { photo: photoData } : {}),
+          ...(raw.photos_changed === 'true' ? {photos: JSON.parse(raw.photos || '[]')} : {}),
           is_published: true
         })
       });
@@ -1800,7 +1798,7 @@ function openModal(type, id) {
       field('dose', 'Дозировка, как указано врачом', 'text', { required: true }) +
       field('startDate', 'Начало курса', 'date', { required: true }) +
       field('duration', 'Длительность курса', 'text', { required: true, placeholder: 'Например, 7 дней' }) +
-      field('times', 'Время приёма', 'text', { placeholder: '09:00, 21:00' }) +
+      field('times', 'Время приёма МСК', 'text', { required: true, placeholder: '09:00, 21:00' }) +
       field('status', 'Статус', 'select', { options: [['Активно', 'Активно'], ['Завершено', 'Завершено'], ['Остановлено', 'Остановлено']] });
   } else if (type === 'weight') {
     title = 'Новое измерение';
@@ -2190,6 +2188,7 @@ $('editor-form').onsubmit = async event => {
       }
       state.prescriptions.push({ id: serverId ? 'spr_' + serverId : uid(), serverId, petId: p.id, ...data });
       logActivity(p.id, 'Добавил(а) назначение: ' + data.name, '💊');
+      if (p.serverId) await syncServerData(true);
     } else if (modalType === 'weight') {
       const kg = Number(data.kg);
       let serverId = null;

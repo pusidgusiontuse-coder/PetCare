@@ -341,12 +341,19 @@ class MatchProfileCreate(BaseModel):
     owner_name: Optional[str] = "Владелец"
     owner_contact: str
     photo: Optional[str] = None
+    photos: Optional[List[str]] = Field(default=None, max_length=5)
     is_published: Optional[bool] = True
 
 
     @model_validator(mode='after')
     def validate_photo(self):
         self.photo, _ = validate_attachment(self.photo, images_only=True, limit=MAX_PHOTO_BYTES)
+        if self.photos is not None:
+            if any(not photo for photo in self.photos):
+                raise ValueError("Фото не должно быть пустым")
+            self.photos = [validate_attachment(photo, images_only=True, limit=MAX_PHOTO_BYTES)[0] for photo in self.photos]
+            if sum(len(payload) * 3 // 4 - (len(payload) - len(payload.rstrip("="))) for payload in (photo.split(",", 1)[1] for photo in self.photos)) > MAX_PHOTO_BYTES:
+                raise ValueError("Все фото анкеты вместе должны быть не больше 10 МБ")
         return self
 
 class MatchDecisionCreate(BaseModel):

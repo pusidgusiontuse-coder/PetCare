@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text
+from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text, JSON
 from sqlalchemy.orm import relationship
 from model_base import Base
 
@@ -172,6 +172,7 @@ class Reminder(Base):
     at = Column(String(50), nullable=True)
     interval_days = Column(Integer, nullable=True)
     interval_months = Column(Integer, nullable=True)
+    prescription_id = Column(Integer, ForeignKey("prescriptions.id", ondelete="SET NULL"), nullable=True)
     food = Column(String(200), nullable=True)
     status = Column(String(50), default="pending")  # pending, completed, skipped
     is_completed = Column(Boolean, default=False)
@@ -256,6 +257,7 @@ class MatchProfile(Base):
     owner_name = Column(String(120), default="Владелец")
     owner_contact = Column(String(255), nullable=False)
     photo = Column(Text, nullable=True)
+    photos = Column(JSON, nullable=True)
     is_published = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

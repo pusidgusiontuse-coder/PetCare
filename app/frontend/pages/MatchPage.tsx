@@ -1,4 +1,4 @@
-import { FilePicker } from '../components/FilePicker';
+import { ProfileGallery } from '../components/ProfileGallery';
 
 export function MatchPage() {
   return (
@@ -144,17 +144,10 @@ export function MatchPage() {
                   </option>
                 </select>
               </label>
-              <label className="field">
-                {"Стерилизация / кастрация\n              "}
-                <select name="sterilized">
-                  <option value="Нет">
-                    Нет
-                  </option>
-                  <option value="Да">
-                    Да
-                  </option>
-                </select>
-              </label>
+              <fieldset className="purpose-field sterilization-field full"><legend>Стерилизация / кастрация</legend><div className="purpose-options binary-options">
+                <label className="purpose-option"><input type="radio" name="sterilized" value="Да" /><span><strong>Да</strong><small>Проведена</small></span><span className="purpose-check" aria-hidden="true" /></label>
+                <label className="purpose-option"><input type="radio" name="sterilized" value="Нет" defaultChecked /><span><strong>Нет</strong><small>Не проводилась</small></span><span className="purpose-check" aria-hidden="true" /></label>
+              </div></fieldset>
               <fieldset className="purpose-field full">
                 <legend>Кого ищем?</legend>
                 <p>Выберите главную цель знакомства</p>
@@ -195,7 +188,7 @@ export function MatchPage() {
                 {"О питомце (характер, привычки, кого ищете)\n              "}
                 <textarea name="bio" rows={4} placeholder="Расскажите о характере питомца и кого ищете для прогулок или общения" />
               </label>
-              <FilePicker id="match-photo-input" name="photo_file" kind="photo" title="Фото для анкеты" />
+              <ProfileGallery />
               <div className="form-actions full" style={{"justifyContent": "flex-start"}}>
                 <button type="submit" className="btn primary" id="btn-save-match-profile">
                   Опубликовать анкету

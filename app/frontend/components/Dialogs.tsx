@@ -3,7 +3,7 @@ export function Dialogs() {
   return (
     <>
       <dialog id="editor" aria-labelledby="editor-title" aria-describedby="editor-context">
-        <button type="button" id="close-editor" className="modal-close" aria-label="Закрыть карточку или форму" />
+        <div className="editor-close-bar"><button type="button" id="close-editor" className="modal-close" aria-label="Закрыть карточку или форму" /></div>
         <form id="editor-form">
           <h2 id="editor-title" />
           <p id="editor-context" className="small" />

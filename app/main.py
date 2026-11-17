@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from datetime import timedelta, date, datetime
 from typing import List, Optional
 from pathlib import Path
@@ -1033,6 +1034,18 @@ def add_prescription(
         status=presc_data.status
     )
     db.add(new_presc)
+    db.flush()
+    if presc_data.status == 'Активно' and presc_data.times:
+        clocks = list(dict.fromkeys(re.split(r'[,;\s]+', presc_data.times.strip())))
+        days = re.fullmatch(r'(\d{1,3})(?:\s*(?:день|дня|дней|дн\.?))?', (presc_data.duration or '').strip())
+        if not days or not 1 <= int(days[1]) <= 365 or not 1 <= len(clocks) <= 6 or any(not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', clock) for clock in clocks):
+            raise HTTPException(422, 'Для напоминаний укажите длительность в днях (1–365) и время ЧЧ:ММ через запятую (до 6 приёмов в день).')
+        for offset in range(int(days[1])):
+            day = presc_data.start_date + timedelta(days=offset)
+            for clock in clocks:
+                db.add(models.Reminder(pet_id=pet.id, prescription_id=new_presc.id,
+                    title=(presc_data.name + (' · ' + presc_data.dose if presc_data.dose else ''))[:255],
+                    reminder_type='Препарат', due_date=day, due_time=clock, at=day.isoformat()+'T'+clock+':00+03:00'))
     db.commit()
     db.refresh(new_presc)
     return new_presc
@@ -1057,6 +1070,8 @@ def delete_prescription(
     pr = db.query(models.Prescription).filter(models.Prescription.id == presc_id).first()
     if not pr or not user_has_pet_access(pr.pet_id, current_user.id, db, write=True):
         raise HTTPException(status_code=404, detail="Назначение не найдено")
+    db.query(models.Reminder).filter(models.Reminder.prescription_id == pr.id, models.Reminder.status == 'pending').delete(synchronize_session=False)
+    db.query(models.Reminder).filter(models.Reminder.prescription_id == pr.id).update({'prescription_id':None}, synchronize_session=False)
     db.delete(pr)
     db.commit()
     return None
@@ -1655,6 +1670,7 @@ def _profile_to_dict(mp: models.MatchProfile) -> dict:
         "owner_name": mp.owner_name,
         "owner_contact": mp.owner_contact,
         "photo": mp.photo,
+        "photos": mp.photos if mp.photos is not None else ([mp.photo] if mp.photo else []),
         "is_published": mp.is_published,
     }
 
@@ -1860,6 +1876,11 @@ def save_pet_match_profile(
             is_published=True
         )
         db.add(existing)
+    if data.photos is not None:
+        existing.photos = data.photos
+        existing.photo = data.photos[0] if data.photos else None
+    elif data.photo:
+        existing.photos = [data.photo]
     db.commit()
     db.refresh(existing)
     return _profile_to_dict(existing)

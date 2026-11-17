@@ -21,13 +21,14 @@ export function PetsPage() {
             </button>
           </div>
         </div>
+        <div id="pet-cards" className="pet-grid" />
         <section id="today-panel" className="panel glass" aria-labelledby="today-heading" hidden>
           <h2 id="today-heading">
             Сегодня
           </h2>
           <div id="today-overview" />
         </section>
-        <div id="pet-cards" className="pet-grid" />
+        <details id="tomorrow-panel" className="panel tomorrow-panel"><summary><span><strong>Завтра</strong><small id="tomorrow-summary" /></span><span aria-hidden="true">↗</span></summary><div id="tomorrow-overview" /></details>
         <div className="directory-note">
           <svg aria-hidden="true">
             <use href="#heart" />
