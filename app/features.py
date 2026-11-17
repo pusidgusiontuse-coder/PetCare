@@ -118,8 +118,14 @@ def digest(challenge_id, code):
 
 def enforce_quota(db, key, limit):
     # Atomic counter, shared by processes (also used for OCR and email abuse limits).
-    db.execute(text('INSERT INTO request_quotas (key, count) VALUES (:key, 0) ON CONFLICT (key) DO NOTHING'), {'key': key})
-    result = db.execute(text('UPDATE request_quotas SET count=count+1 WHERE key=:key AND count<:limit'), {'key': key, 'limit': limit})
+    quota = models.RequestQuota.__table__
+    if db.get_bind().dialect.name == 'mysql':
+        from sqlalchemy.dialects.mysql import insert
+        statement = insert(quota).values(key=key, count=0)
+        db.execute(statement.on_duplicate_key_update(count=quota.c.count))
+    else:
+        db.execute(text('INSERT INTO request_quotas (key, count) VALUES (:key, 0) ON CONFLICT (key) DO NOTHING'), {'key': key})
+    result = db.execute(update(quota).where(quota.c.key == key, quota.c.count < limit).values(count=quota.c.count + 1))
     db.commit()
     if result.rowcount != 1: raise HTTPException(429, 'Лимит попыток исчерпан. Попробуйте позже.')
 
