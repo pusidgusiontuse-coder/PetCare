@@ -104,7 +104,8 @@ with sync_playwright() as playwright:
         page.locator('[data-account-pet="' + original_pet + '"]').click()
         expect(page.locator('#food-filter')).to_have_value('all')
         expect(page.locator('.food-entry').filter(has_text=food_name)).to_be_visible()
-        page.get_by_role('link', name='Документы', exact=True).click()
+        page.get_by_role('link', name='Здоровье', exact=True).click()
+        page.get_by_role('tab', name='Документы', exact=True).click()
         page.evaluate('''() => {
             state.health = [{id:'visit-new',petId:pet().id,title:'Анализ крови',type:'other',date:'2026-11-15',attachment:{name:'new.pdf'}},
                 {id:'visit-old',petId:pet().id,title:'Анализ крови',type:'other',date:'2026-10-15',attachment:{name:'old.pdf'}}];
@@ -112,9 +113,14 @@ with sync_playwright() as playwright:
         }''')
         page.locator('[data-linked-health=visit-old]').click()
         expect(page.locator('[data-health-record=visit-old]')).to_be_focused()
-        page.get_by_role('link', name='Документы', exact=True).click()
+        page.get_by_role('link', name='Здоровье', exact=True).click()
+        page.get_by_role('tab', name='Документы', exact=True).click()
         page.locator('#document-search').fill('Нет такого документа')
         expect(page.locator('#document-list')).to_contain_text('Документов не найдено')
+        page.reload()
+        expect(page.locator('#health.active')).to_be_visible()
+        expect(page.get_by_role('tab', name='Документы', exact=True)).to_have_attribute('aria-selected', 'true')
+        expect(page.locator('#documents')).to_be_visible()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Horizontal overflow'
         assert not errors, errors
         page.screenshot(path=f'/tmp/petcare-ux-{width}.png', full_page=True)

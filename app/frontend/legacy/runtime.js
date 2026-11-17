@@ -1,12 +1,12 @@
 import { createApiClient } from '../lib/api';
+import { bindFilePicker, filePickerMarkup, readUpload, uploadError } from '../lib/filePicker';
 import { publishNutrition, resetNutritionFilters } from '../features/nutrition/store';
 
 // =====================================================================
 // 1. CORE HELPERS & API CLIENT (ZERO-STORAGE JWT + BACKEND SYNC)
 // =====================================================================
 const $ = id => document.getElementById(id);
-// Temporarily paused; retain all Friends UI, API integration and stored profiles.
-const FRIENDS_ENABLED = false;
+const FRIENDS_ENABLED = true;
 document.documentElement.dataset.friendsEnabled = String(FRIENDS_ENABLED);
 document.querySelector('.nav [data-page="match"]').hidden = !FRIENDS_ENABLED;
 document.getElementById('match').hidden = !FRIENDS_ENABLED;
@@ -558,10 +558,12 @@ function setupPetAccountSwitcher() {
   document.addEventListener('pointerdown', event => { if (!widget.contains(event.target)) closePetAccounts(); });
 }
 
+let healthTab = 'overview';
 const pageLabels = { pets: 'Мои питомцы', health: 'Здоровье', nutrition: 'Питание', care: 'Уход и события', documents: 'Документы', match: 'Поиск друзей', profile: 'Профиль и настройки' };
 
 function routeHash(name, petId = pet()?.id) {
   if (name === 'pets' || name === 'profile' || !petId) return '#/' + name;
+  if (name === 'health' && healthTab === 'documents') name = 'health/documents';
   return '#/pet/' + encodeURIComponent(petId) + '/' + name;
 }
 
@@ -589,14 +591,18 @@ function setPetContext(id) {
 
 function selectPet(id, destination = page) {
   if (!setPetContext(id)) return;
+  if (destination === 'health' && healthTab === 'documents') destination = 'documents';
   show(['pets', 'profile'].includes(destination) ? 'health' : destination);
 }
 
 function show(name, updateUrl = true) {
+  const requestedDocuments = name === 'documents';
+  if (requestedDocuments) name = 'health';
   if (name === 'match' && !FRIENDS_ENABLED) { name = 'pets'; history.replaceState(null, '', routeHash('pets')); }
   if (name === 'home') name = 'health';
   if (!Object.hasOwn(pageLabels, name) || (!pet() && !['pets', 'profile'].includes(name))) name = 'pets';
   if (name !== page && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
+  if (name === 'health') healthTab = requestedDocuments ? 'documents' : 'overview';
   const pageChanged = name !== page;
   const enteringMatch = name === 'match' && page !== 'match';
   page = name;
@@ -616,10 +622,28 @@ function show(name, updateUrl = true) {
     const hash = routeHash(name);
     if (location.hash !== hash) history.pushState(null, '', hash);
   }
+  $('health-overview-panel').hidden = healthTab !== 'overview';
+  $('documents').hidden = healthTab !== 'documents';
+  document.querySelector('#health > .topline [data-modal=health]').hidden = healthTab === 'documents';
+  document.querySelectorAll('[data-health-tab]').forEach(tab => {
+    const selected = tab.dataset.healthTab === healthTab;
+    tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
+  });
   render();
   window.scrollTo(0, 0);
   if (pageChanged) { const heading = $(name)?.querySelector('h1'); if (heading) { heading.tabIndex = -1; heading.focus({preventScroll:true}); } }
 }
+
+document.querySelectorAll('[data-health-tab]').forEach(tab => {
+  tab.onclick = () => show(tab.dataset.healthTab === 'documents' ? 'documents' : 'health');
+  tab.onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const target = event.key === 'Home' ? 'overview' : event.key === 'End' ? 'documents' : healthTab === 'overview' ? 'documents' : 'overview';
+    show(target === 'documents' ? 'documents' : 'health');
+    document.querySelector('[data-health-tab="' + target + '"]').focus();
+  };
+});
 
 function renderShell() {
   const current = pet();
@@ -1212,6 +1236,7 @@ function populateMatchFormFromPet(forceFromPetCard = false) {
   const p = pet();
   const form = $('match-profile-form');
   if (!p || !form) return;
+  if (form.dataset.petId === String(p.id) && form.dataset.dirty === 'true') return;
   const m = matchDataByPet[p.id] || {};
   const existing = !forceFromPetCard ? m.myProfile : null;
   const hasVacc = state.health.some(h => isForPet(h, p) && h.type === 'vaccination');
@@ -1223,12 +1248,15 @@ function populateMatchFormFromPet(forceFromPetCard = false) {
   form.elements.namedItem('sex').value = existing?.sex || p.sex || 'Неизвестно';
   form.elements.namedItem('vaccinated').value = existing?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано');
   form.elements.namedItem('sterilized').value = existing?.sterilized || (p.sterilized === 'Да' ? 'Да' : 'Нет');
-  form.elements.namedItem('purpose').value = existing?.purpose || 'Совместные прогулки и игры';
+  const purpose = existing?.purpose || 'Совместные прогулки и игры';
+  form.elements.namedItem('purpose').value = [...form.querySelectorAll('[name=purpose]')].some(option => option.value === purpose) ? purpose : 'Совместные прогулки и игры';
   form.elements.namedItem('city').value = existing?.city || '';
   form.elements.namedItem('owner_name').value = existing?.owner_name || state.user.name || '';
   form.elements.namedItem('owner_contact').value = existing?.owner_contact || '';
   form.elements.namedItem('bio').value = existing?.bio || p.notes || '';
+  matchPhotoPicker.setPhoto(existing?.photo || p.photo || '');
   form.dataset.petId = String(p.id);
+  form.dataset.dirty = 'false';
 }
 
 function renderTinderCardHTML(candidate, mode = 'discover') {
@@ -1486,7 +1514,10 @@ function renderMatch() {
   }
 }
 
+const matchPhotoPicker = bindFilePicker($('match-photo-input').closest('[data-file-picker]'));
+
 if ($('match-profile-form')) {
+  ['input', 'change'].forEach(type => $('match-profile-form').addEventListener(type, () => { $('match-profile-form').dataset.dirty = 'true'; }));
   $('match-profile-form').onsubmit = async event => {
     event.preventDefault();
     const p = pet();
@@ -1495,18 +1526,18 @@ if ($('match-profile-form')) {
     const raw = Object.fromEntries(new FormData(form));
     const photoFile = $('match-photo-input')?.files?.[0];
     let photoData = null;
+    const feedback = $('match-profile-feedback');
+    feedback.textContent = '';
     if (photoFile) {
-      photoData = await new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.readAsDataURL(photoFile);
-      });
+      const error = uploadError(photoFile, 'photo');
+      if (error) { feedback.textContent = error; return; }
     }
 
     const submitBtn = $('btn-save-match-profile');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Сохраняем в базу…';
     try {
+      if (photoFile) photoData = await readUpload(photoFile);
       await apiFetch('/pets/' + p.serverId + '/match-profile', {
         method: 'POST',
         body: JSON.stringify({
@@ -1526,7 +1557,7 @@ if ($('match-profile-form')) {
           is_published: true
         })
       });
-      if (photoData) p.photo = photoData;
+      form.dataset.dirty = 'false';
       logActivity(p.id, 'Опубликовал(а) анкету питомца ' + p.name, '🐾');
       await loadMatchDataForActivePet(false);
       setMatchTab('discover');
@@ -1534,7 +1565,7 @@ if ($('match-profile-form')) {
       $('match-profile-feedback').textContent = err.message || 'Ошибка сохранения анкеты';
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Выложить анкету в базу';
+      submitBtn.textContent = 'Опубликовать анкету';
     }
   };
 }
@@ -1694,6 +1725,13 @@ function decorateEditor(type) {
   }
 }
 
+let editorFilePickers = [];
+function wireEditorFilePickers() {
+  editorFilePickers.forEach(picker => picker.dispose());
+  editorFilePickers = [...$('editor-fields').querySelectorAll('[data-file-picker]')].map(root => bindFilePicker(root));
+}
+$('editor').addEventListener('close', () => { editorFilePickers.forEach(picker => picker.dispose()); editorFilePickers = []; });
+
 function openModal(type, id) {
   $('editor').dataset.mode = type;
   $('editor-form').querySelector('[type=submit]').textContent = type === 'nutrition' ? 'Сохранить корм' : 'Сохранить';
@@ -1731,7 +1769,7 @@ function openModal(type, id) {
       field('marks', 'Важные отметки', 'textarea', { full: true, placeholder: 'Аллергии, хронические состояния' }) +
       field('notes', 'Особенности', 'textarea', { full: true }) +
       field('chip', 'Номер чипа') +
-      field('photo', 'Фото питомца до 1 МБ', 'file', { full: true }) +
+      filePickerMarkup('pet-photo-upload', 'photo', 'photo', 'Фото питомца') +
       joinBottomBlock;
   } else if (type === 'move') {
     title = 'Перенести событие';
@@ -1755,7 +1793,7 @@ function openModal(type, id) {
       field('repeatDays', 'Или повтор через N дней', 'number', { min: '1', step: '1' }) +
       field('nextTime', 'Время напоминания МСК', 'time') +
       f.notes() +
-      field('attachment', 'Фото или PDF', 'file', { full: true });
+      filePickerMarkup('health-attachment', 'attachment', 'document', 'Фото или PDF к записи');
   } else if (type === 'prescription') {
     title = 'Назначение препарата';
     html = field('name', 'Препарат', 'text', { required: true }) +
@@ -1785,7 +1823,7 @@ function openModal(type, id) {
       </div></details>`;
   }
 
-  if (type !== 'pet-details') { $('editor-fields').innerHTML = html; decorateEditor(type); }
+  if (type !== 'pet-details') { $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers(); }
   $('editor-title').textContent = title;
   $('editor-context').textContent = type === 'pet' ? 'Создайте карточку питомца или подключитесь по коду совместного доступа.' : ('Кабинет: ' + (p?.name || 'Питомец'));
 
@@ -1862,7 +1900,7 @@ function openExtraModal(type) {
       '<p class="hint meal-form-hint"><span class="meal-range-hint" hidden>Интервал задаётся в пределах одного дня. </span>Повторяется ежедневно и синхронизируется с сервером.</p>';
     $('editor-title').textContent = title;
     $('editor-context').textContent = 'Кабинет: ' + p.name;
-    $('editor-fields').innerHTML = html; decorateEditor(type);
+    $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers();
     const fields = $('editor-fields'), start = fields.querySelector('[name=time]'), end = fields.querySelector('[name=endTime]');
     start.value = '08:30';
     const updateTiming = () => {
@@ -1899,7 +1937,7 @@ function openExtraModal(type) {
     html = field('title', 'Название', 'text', { required: true, placeholder: 'Ветпаспорт, анализ крови…' }) +
       field('type', 'Тип', 'select', { options: [['passport', 'Ветеринарный паспорт'], ['conclusion', 'Заключение'], ['prescription', 'Назначение'], ['other', 'Другое']] }) +
       field('date', 'Дата', 'date', { required: true }) +
-      field('file', 'Фото или PDF до 2 МБ', 'file', { required: true, full: true });
+      filePickerMarkup('document-upload', 'file', 'document', 'Файл документа', true);
   } else if (type === 'shopping') {
     title = 'Добавить покупку';
     html = field('title', 'Что купить?', 'text', { required: true }) +
@@ -1918,7 +1956,7 @@ function openExtraModal(type) {
     title = 'Аватар питомца';
     html = field('background', 'Фон', 'select', { options: [['lavender', 'Лаванда'], ['peach', 'Персик'], ['mint', 'Мята']] }) +
       field('accessory', 'Аксессуар', 'select', { options: [['none', 'Без аксессуара'], ['bow', 'Бант'], ['crown', 'Корона']] }) +
-      field('photo', 'Своя фотография (JPG, PNG или WebP до 1 МБ)', 'file', { full: true });
+      filePickerMarkup('avatar-photo-upload', 'photo', 'photo', 'Фото питомца');
   } else if (type === 'settings') {
     title = 'Уведомления';
     html = field('quietEnabled', 'Тихие часы', 'select', { options: [['no', 'Выключены'], ['yes', 'Включены']] }) +
@@ -1930,7 +1968,7 @@ function openExtraModal(type) {
 
   $('editor-title').textContent = title;
   $('editor-context').textContent = ['profile', 'settings'].includes(type) ? 'Настройки владельца' : ('Кабинет: ' + (p?.name || 'Питомец'));
-  $('editor-fields').innerHTML = html; decorateEditor(type);
+  $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers();
   $('editor-form').querySelector('.form-actions').style.display = 'flex';
 
   const form = $('editor-form');
@@ -1993,6 +2031,13 @@ $('editor-form').onsubmit = async event => {
       return;
     }
   }
+  for (const input of form.querySelectorAll('[data-file-picker] input[type=file]')) {
+    const file = input.files?.[0];
+    if (file) {
+      const error = uploadError(file, input.closest('[data-file-picker]').dataset.kind);
+      if (error) { notify(error); return; }
+    }
+  }
   const data = Object.fromEntries(new FormData(form));
   const p = state.pets.find(x => x.id === (data.petId || $('editor').dataset.petId)) || pet();
   const submitButton = form.querySelector('[type=submit]');
@@ -2005,7 +2050,7 @@ $('editor-form').onsubmit = async event => {
       const photoFile = form.elements.namedItem('photo')?.files?.[0];
       let photoData = null;
       if (photoFile) {
-        photoData = await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(photoFile); });
+        photoData = await readUpload(photoFile);
       }
       if (modalType === 'pet') {
         let serverId = null, shareCode = '';
@@ -2103,7 +2148,7 @@ $('editor-form').onsubmit = async event => {
       const file = form.elements.namedItem('attachment')?.files?.[0];
       let attachment = null;
       if (file) {
-        attachment = { name: file.name, data: await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(file); }) };
+        attachment = { name: file.name, data: await readUpload(file) };
       }
       let serverId = null;
       if (p.serverId) {
@@ -2268,7 +2313,7 @@ $('editor-form').onsubmit = async event => {
       const file = form.elements.namedItem('file')?.files?.[0];
       let fileData = '';
       if (file) {
-        fileData = await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(file); });
+        fileData = await readUpload(file);
       }
       let serverId = null;
       if (p.serverId) {
@@ -2314,7 +2359,7 @@ $('editor-form').onsubmit = async event => {
     } else if (modalType === 'extra-avatar') {
       const photo = form.elements.namedItem('photo')?.files?.[0];
       if (photo) {
-        p.photo = await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(photo); });
+        p.photo = await readUpload(photo);
       }
       state.avatar[p.id] = { background: data.background, accessory: data.accessory };
       if (p.serverId) {
@@ -2479,6 +2524,7 @@ $('api-logout').onclick = async () => {
 // Automatic background sync on window focus / visibility change / interval
 function canAutoSync() {
   if (syncPending > 0) return false;
+  if (page === 'match' && $('match-profile-form')?.dataset.dirty === 'true') return false;
   if (!authToken || document.hidden) return false;
   if ($('editor')?.open || $('auth-dialog')?.open || $('security-dialog')?.open || $('temporal-picker')?.open) return false;
   if ($('health-pet-form')?.dataset.dirty === 'true') return false;
@@ -2495,68 +2541,7 @@ setInterval(() => {
   if (canAutoSync()) syncServerData(true);
 }, 20000);
 
-// =====================================================================
-// 10. AI DOCUMENT RECOGNITION
-// =====================================================================
-(() => {
-  const photoInput = $('document-photo');
-  const recognizeButton = $('recognize-button');
-  const copyButton = $('copy-recognized');
-  const recognizeStatus = $('recognize-status');
-  const recognizedText = $('recognized-text');
-
-  function setStatus(msg, isError = false) {
-    recognizeStatus.textContent = msg;
-    recognizeStatus.classList.toggle('error', isError);
-  }
-
-  function updateButtons() {
-    copyButton.disabled = !recognizedText.value.trim();
-  }
-
-  photoInput.onchange = () => {
-    const file = photoInput.files?.[0];
-    if (!file) return;
-    setStatus('Выбран файл: ' + file.name);
-  };
-
-  recognizedText.oninput = updateButtons;
-
-  recognizeButton.onclick = async () => {
-    const file = photoInput.files?.[0];
-    if (!file) {
-      setStatus('Сначала выберите фото документа.', true);
-      return;
-    }
-
-    if(file.size>10*1024*1024){setStatus('Максимальный размер — 10 МБ.',true);return;}
-
-    try {
-      recognizeButton.disabled = true;
-      setStatus('Проверяем доступ…');
-      const access = await apiFetch('/billing/status');
-      if (!access.premium) throw new Error('Распознавание доступно в платной версии. Запросите доступ у администратора.');
-      const res = await window.PetCareOCR.recognize(file, {
-        rotation: Number($('ocr-rotation').value), progress: message => setStatus(message)
-      });
-      recognizedText.value = res?.text || '';
-      updateButtons();
-      setStatus((res.confidence < 65 ? 'Качество распознавания низкое. Лучше переснять документ. ' : 'Текст распознан. ') + 'Проверьте названия, даты и дозировки перед использованием.');
-    } catch (err) {
-      setStatus(err.message || 'Ошибка сервиса распознавания', true);
-    } finally {
-      recognizeButton.disabled = false;
-    }
-  };
-
-  copyButton.onclick = async () => {
-    if (!recognizedText.value.trim()) return;
-    try {
-      if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(recognizedText.value); showCopiedToast('Скопировано');
-    } catch { setStatus('Не удалось скопировать. Выделите распознанный текст и скопируйте вручную.', true); }
-  };
-})();
+// Document recognition is paused; the Health screen shows a locked “Скоро” card.
 
 // =====================================================================
 // 11. TEMPORAL DATE/TIME PICKER (FROM NEW DESIGN)
@@ -3419,7 +3404,7 @@ function restoreRoute() {
   if (parts[0] === 'pet' && state.pets.some(p => p.id === parts[1])) {
     if (state.selected !== parts[1] && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
     state.selected = parts[1];
-    show(parts[2] || 'health', false);
+    show(parts[2] === 'health' && parts[3] === 'documents' ? 'documents' : parts[2] || 'health', false);
   } else {
     show(parts[0] === 'profile' ? 'profile' : 'pets', false);
   }
@@ -3429,6 +3414,8 @@ window.addEventListener('hashchange', restoreRoute);
 // Initial render + full backend sync
 restoreRoute();
 syncServerData().then(() => {
+  // Pet-scoped deep links can be resolved only after the server supplies pets.
+  restoreRoute();
   seedInitialPastNotifications();
   updatePushStatusUI();
   scheduleNextExactPush();

@@ -6,7 +6,6 @@ import { PetsPage } from './pages/PetsPage';
 import { HealthPage } from './pages/HealthPage';
 import { NutritionPage } from './pages/NutritionPage';
 import { CarePage } from './pages/CarePage';
-import { DocumentsPage } from './pages/DocumentsPage';
 import { MatchPage } from './pages/MatchPage';
 import { ProfilePage } from './pages/ProfilePage';
 
@@ -24,7 +23,6 @@ export function App() {
         <HealthPage />
         <NutritionPage />
         <CarePage />
-        <DocumentsPage />
         <MatchPage />
         <ProfilePage />
       </main>

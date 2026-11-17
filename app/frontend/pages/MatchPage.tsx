@@ -1,8 +1,9 @@
+import { FilePicker } from '../components/FilePicker';
 
 export function MatchPage() {
   return (
     <>
-      <section hidden id="match" className="section">
+      <section id="match" className="section">
         <div className="topline">
           <div>
             <p className="eyebrow">
@@ -37,7 +38,7 @@ export function MatchPage() {
           </button>
           <button type="button" className="match-mode-tab" data-match-tab="liked" role="tab" aria-selected="false">
             <span>
-              Отмеченные анкеты
+              Друзья
             </span>
             <span className="match-tab-count" id="match-liked-count">
               0
@@ -73,7 +74,7 @@ export function MatchPage() {
             <div className="panel-head">
               <div>
                 <h2>
-                  Отмеченные анкеты
+                  Друзья
                 </h2>
                 <p className="small" style={{"margin": "4px 0 0"}}>
                   Питомцы, которых вы отметили лайком, и контакты их хозяев
@@ -154,20 +155,30 @@ export function MatchPage() {
                   </option>
                 </select>
               </label>
-              <label className="field">
-                {"Цель поиска\n              "}
-                <select name="purpose">
-                  <option value="Совместные прогулки и игры">
-                    Совместные прогулки и игры
-                  </option>
-                  <option value="Поиск компании по породе">
-                    Поиск компании по породе
-                  </option>
-                  <option value="Вязка / продолжение рода">
-                    Вязка / продолжение рода
-                  </option>
-                </select>
-              </label>
+              <fieldset className="purpose-field full">
+                <legend>Кого ищем?</legend>
+                <p>Выберите главную цель знакомства</p>
+                <div className="purpose-options">
+                  <label className="purpose-option">
+                    <input type="radio" name="purpose" value="Совместные прогулки и игры" defaultChecked />
+                    <span className="purpose-icon" aria-hidden="true"><svg><use href="#paw" /></svg></span>
+                    <span><strong>Гулять и играть</strong><small>Компания для прогулок и новых открытий</small></span>
+                    <span className="purpose-check" aria-hidden="true" />
+                  </label>
+                  <label className="purpose-option">
+                    <input type="radio" name="purpose" value="Поиск компании по породе" />
+                    <span className="purpose-icon" aria-hidden="true"><svg><use href="#spark" /></svg></span>
+                    <span><strong>Найти свою компанию</strong><small>Знакомства с питомцами той же породы</small></span>
+                    <span className="purpose-check" aria-hidden="true" />
+                  </label>
+                  <label className="purpose-option">
+                    <input type="radio" name="purpose" value="Вязка / продолжение рода" />
+                    <span className="purpose-icon" aria-hidden="true"><svg><use href="#heart" /></svg></span>
+                    <span><strong>Найти пару</strong><small>Партнёр для продолжения рода</small></span>
+                    <span className="purpose-check" aria-hidden="true" />
+                  </label>
+                </div>
+              </fieldset>
               <label className="field">
                 {"Город и район\n              "}
                 <input name="city" type="text" placeholder="Например: Москва, Сокольники" />
@@ -184,13 +195,10 @@ export function MatchPage() {
                 {"О питомце (характер, привычки, кого ищете)\n              "}
                 <textarea name="bio" rows={4} placeholder="Расскажите о характере питомца и кого ищете для прогулок или общения" />
               </label>
-              <label className="field full">
-                {"Фотография для анкеты (необязательно)\n              "}
-                <input name="photo_file" id="match-photo-input" type="file" accept="image/jpeg,image/png,image/webp" />
-              </label>
+              <FilePicker id="match-photo-input" name="photo_file" kind="photo" title="Фото для анкеты" />
               <div className="form-actions full" style={{"justifyContent": "flex-start"}}>
                 <button type="submit" className="btn primary" id="btn-save-match-profile">
-                  Выложить анкету в базу
+                  Опубликовать анкету
                 </button>
                 <span id="match-profile-feedback" className="small" role="status" aria-live="polite" />
               </div>

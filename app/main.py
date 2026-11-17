@@ -1837,6 +1837,8 @@ def save_pet_match_profile(
         existing.owner_contact = data.owner_contact
         if data.photo:
             existing.photo = data.photo
+        elif not existing.photo:
+            existing.photo = pet.photo_file_id
         existing.is_published = data.is_published if data.is_published is not None else True
     else:
         existing = models.MatchProfile(
@@ -1858,8 +1860,6 @@ def save_pet_match_profile(
             is_published=True
         )
         db.add(existing)
-    if data.photo:
-        pet.photo_file_id = data.photo
     db.commit()
     db.refresh(existing)
     return _profile_to_dict(existing)

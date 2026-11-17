@@ -82,20 +82,12 @@ export function Sidebar() {
               Уход и события
             </span>
           </a>
-          <a href="#documents" data-page="documents" aria-label="Документы">
-            <svg aria-hidden="true">
-              <use href="#folder" />
-            </svg>
-            <span className="nav-label" data-mobile="Файлы">
-              Документы
-            </span>
-          </a>
-          <a href="#match" data-page="match" hidden aria-label="Поиск друзей">
+          <a href="#match" data-page="match" aria-label="Друзья">
             <svg aria-hidden="true">
               <use href="#spark" />
             </svg>
             <span className="nav-label" data-mobile="Друзья">
-              Поиск друзей
+              Друзья
             </span>
             <span id="match-nav-badge" className="nav-badge" hidden>
               0

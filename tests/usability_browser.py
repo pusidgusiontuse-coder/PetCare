@@ -37,7 +37,7 @@ with sync_playwright() as p:
         assert abs(circle['x']+circle['width']/2-width/2)<2
         page.screenshot(path=f'/tmp/petcare-menu-audit-{width}.png')
     page.set_viewport_size({'width':375,'height':812})
-    for name in ('Здоровье','Питание','Уход и события','Документы'):
+    for name in ('Здоровье','Питание','Уход и события','Друзья'):
         page.get_by_role('link',name=name,exact=True).click()
         expect(page.locator('section.active h1')).to_be_focused()
         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')

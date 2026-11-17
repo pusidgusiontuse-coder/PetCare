@@ -4828,3 +4828,72 @@ h1,h2,h3 { text-wrap:balance; }
 @media(max-width:640px) {
   #care-filters,#document-filters,#health-filters { flex-wrap:wrap; overflow:visible; }
 }
+
+/* Health keeps the medical history and its documents in one place. */
+.health-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; max-width:460px; margin:0 0 24px; padding:5px; border:1px solid var(--line); border-radius:16px; background:var(--soft); }
+.health-tabs button { min-height:46px; border:0; border-radius:12px; background:transparent; color:var(--muted); font:inherit; font-size:15px; font-weight:650; cursor:pointer; }
+.health-tabs button[aria-selected=true] { background:var(--surface); color:var(--accent-dark); box-shadow:0 2px 7px #203c3212; }
+.health-tabs button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+.documents-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:20px; }
+.documents-heading h2 { margin:0 0 6px; font-size:24px; letter-spacing:-.5px; }
+.documents-heading p { margin:0; font-size:14px; }
+.document-categories { margin-bottom:20px; }
+.document-search { margin-bottom:20px; }
+.recognition-soon { display:flex; align-items:center; gap:14px; width:100%; padding:20px; border:1px solid #d9ddda; border-radius:20px; background:#edf0ed; color:#757e79; text-align:left; font:inherit; cursor:default; opacity:1; }
+.recognition-lock { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; border-radius:14px; background:#e1e6e2; }
+.recognition-lock svg { width:24px; height:24px; }
+.recognition-soon strong { display:block; font-size:15px; font-weight:600; }
+.recognition-soon small { display:block; margin-top:5px; font-size:13px; }
+.soon-badge { margin-left:auto; padding:5px 10px; border-radius:20px; background:#e0e5e1; color:#66716a; font-size:12px; font-weight:650; white-space:nowrap; }
+
+/* Shared, bounded upload with a local image or PDF preview. */
+.file-picker { position:relative; min-width:0; gap:12px; padding:18px; border:1px solid var(--line); border-radius:18px; background:var(--surface); }
+.upload-input { position:absolute; width:1px !important; height:1px !important; min-height:0 !important; padding:0 !important; margin:0; opacity:0; overflow:hidden; }
+.upload-preview { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-height:164px; padding:20px; border:1px dashed #bccdc2; border-radius:14px; background:var(--bg); color:var(--muted); font-size:13px; font-weight:400; overflow:hidden; }
+.upload-placeholder { display:grid; place-items:center; width:44px; height:44px; border-radius:14px; background:var(--soft); color:var(--accent); font-size:30px; line-height:1; }
+.upload-preview.has-preview { min-height:0; max-height:390px; padding:10px; border-style:solid; }
+.upload-preview img { display:block; max-width:100%; max-height:368px; object-fit:contain; border-radius:8px; }
+.upload-preview canvas { display:block; width:auto; max-width:100%; max-height:368px; object-fit:contain; background:white; box-shadow:0 2px 8px #203c3214; }
+.file-picker[data-kind=photo] .upload-preview.has-preview { height:240px; padding:0; }
+.file-picker[data-kind=photo] .upload-preview img { width:100%; height:100%; max-height:none; object-fit:cover; border-radius:0; }
+.upload-info { display:grid; gap:4px; min-width:0; }
+.upload-info strong { font-size:14px; overflow-wrap:anywhere; }
+.upload-info small { font-size:12px; line-height:1.5; color:var(--muted); font-weight:400; }
+.upload-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.upload-actions .btn { min-height:44px; padding:10px 16px; font-size:14px; }
+.upload-error { margin:0; font-size:13px; font-weight:400; color:#a63847; line-height:1.5; }
+.upload-error:empty { display:none; }
+
+/* Purpose cards retain native radio and keyboard behaviour. */
+.purpose-field { min-width:0; margin:0; padding:0; border:0; }
+.purpose-field legend { padding:0; font-size:16px; font-weight:650; }
+.purpose-field > p { margin:6px 0 14px; font-size:13px; color:var(--muted); }
+.purpose-options { display:grid; gap:10px; }
+.purpose-option { position:relative; display:grid; grid-template-columns:42px minmax(0,1fr) 20px; align-items:center; gap:12px; min-height:84px; padding:14px; border:1px solid var(--line); border-radius:16px; background:var(--surface); cursor:pointer; transition:background .15s,border-color .15s; }
+.purpose-option input { position:absolute; width:1px; height:1px; opacity:0; }
+.purpose-icon { display:grid; place-items:center; width:42px; height:42px; border-radius:13px; background:var(--bg); color:var(--muted); }
+.purpose-icon svg { width:23px; height:23px; fill:none; stroke:currentColor; stroke-width:1.6; }
+.purpose-option strong { display:block; font-size:14px; line-height:1.4; font-weight:650; }
+.purpose-option small { display:block; margin-top:4px; font-size:12px; line-height:1.45; color:var(--muted); }
+.purpose-check { width:20px; height:20px; border:1.5px solid #becac2; border-radius:50%; }
+.purpose-option:has(input:checked) { background:var(--soft); border-color:var(--accent); }
+.purpose-option:has(input:checked) .purpose-icon { background:var(--accent); color:white; }
+.purpose-option:has(input:checked) .purpose-check { background:var(--accent); border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--soft); }
+.purpose-option:has(input:focus-visible) { outline:3px solid var(--accent); outline-offset:3px; }
+@media(max-width:1023px) {
+  .sidebar .nav { grid-template-columns:repeat(5,minmax(0,1fr)); min-height:76px; padding:6px; gap:4px; border-radius:24px; }
+}
+@media(max-width:600px) {
+  .health-tabs { max-width:none; margin-bottom:20px; }
+  .documents-heading { align-items:stretch; }
+  .documents-heading > div { width:100%; }
+  .documents-heading > .btn { width:100%; min-height:48px; }
+  .recognition-soon { padding:16px; gap:10px; flex-wrap:wrap; }
+  .recognition-soon > span:nth-child(2) { flex:1; min-width:160px; }
+  .recognition-soon strong { font-size:14px; }
+  .file-picker { padding:14px; }
+  .upload-actions { gap:8px; }
+  .upload-actions .btn { flex:1 1 auto; }
+  .purpose-option { grid-template-columns:38px minmax(0,1fr) 20px; padding:12px; gap:10px; }
+  .purpose-icon { width:38px; height:38px; }
+}

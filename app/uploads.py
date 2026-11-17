@@ -11,7 +11,7 @@ from pypdf import PdfReader
 from pypdf.generic import DictionaryObject, ArrayObject, IndirectObject
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_PHOTO_BYTES = 1024 * 1024
+MAX_PHOTO_BYTES = MAX_FILE_BYTES
 EXTENSIONS = {
     'image/jpeg': ('.jpg', '.jpeg'), 'image/png': ('.png',),
     'image/webp': ('.webp',), 'application/pdf': ('.pdf',), 'text/plain': ('.txt',),

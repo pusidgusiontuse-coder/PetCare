@@ -69,14 +69,16 @@ with sync_playwright() as p:
         expect(moment).to_be_focused()
         page.once('dialog', lambda d:d.accept()); page.locator('#close-editor').click()
         page.evaluate("show('pets')")
-        expect(page.locator('.nav [data-page=match]')).to_be_hidden()
-        page.evaluate("show('match')")
-        expect(page.locator('#pets.active')).to_be_visible()
-        expect(page).to_have_url(BASE + '/#/pets')
-        assert page.locator('#match').count() == 1  # Preserved, not removed.
-        expect(page.locator('#match')).to_be_hidden()
+        expect(page.locator('.nav [data-page=match]')).to_be_visible()
+        page.get_by_role('link', name='Друзья', exact=True).click()
+        expect(page.locator('#match.active')).to_be_visible()
+        page.get_by_role('tab', name='Анкета питомца', exact=True).click()
+        expect(page.locator('.purpose-option')).to_have_count(3)
+        page.locator('.purpose-option').nth(1).click()
+        expect(page.locator('[name=purpose]:checked')).to_have_value('Поиск компании по породе')
+        expect(page.locator('#match-profile-form [data-upload-choose]')).to_be_visible()
         page.evaluate("openModal('pet-details')")
-        expect(page.locator('[data-card-page=match]')).to_have_count(0)
+        expect(page.locator('[data-card-page=match]')).to_have_count(1)
         page.locator('#close-editor').click()
         if width < 1024:
             button=page.locator('.nav .mobile-pets')
@@ -89,7 +91,7 @@ with sync_playwright() as p:
             page.screenshot(path=f'/tmp/petcare-nav-{width}.png')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert not errors, errors
-        assert not friends_requests, friends_requests
+        assert friends_requests, "Friends data should load when the section is enabled"
         print(f'All forms and calendar passed at {width}x{height}')
         context.close()
     browser.close()

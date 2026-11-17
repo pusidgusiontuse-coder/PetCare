@@ -1,4 +1,3 @@
-import '../static/local-ocr.js';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { App } from './App';
