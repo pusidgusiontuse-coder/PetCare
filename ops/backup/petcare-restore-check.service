@@ -1,0 +1,20 @@
+[Unit]
+Description=PetCare restore drill in an empty disposable PostgreSQL database
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=petcare-restore
+Group=petcare-restore
+EnvironmentFile=/etc/petcare/restore-check.env
+ExecStart=/opt/petcare/.venv/bin/python /opt/petcare/scripts/backup_ops.py verify
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=petcare-restore
+WorkingDirectory=/var/lib/petcare-restore
+Environment=RESTIC_CACHE_DIR=/var/lib/petcare-restore/cache
+TimeoutStartSec=4h

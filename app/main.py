@@ -1,5 +1,7 @@
 import base64
 import os
+import re
+import secrets
 from datetime import timedelta, date, datetime
 from typing import List, Optional
 from pathlib import Path
@@ -8,102 +10,22 @@ from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, or_
+from sqlalchemy import or_, select
 
-from settings import ENABLE_DEMO_LOGIN
+from settings import ENABLE_DEMO_LOGIN, PRODUCTION
 import models
 import schemas
 from database import engine, get_db
 from auth import get_password_hash, verify_password, create_access_token, get_current_user
 
-from features import migrate
-migrate(engine)
-
-# Создание всех таблиц базы данных при старте сервера
-models.Base.metadata.create_all(bind=engine)
-
-def ensure_db_columns():
-    """Автоматическая плавная миграция существующих SQLite таблиц при добавлении новых колонок"""
-    try:
-        with engine.connect() as conn:
-            res = conn.execute(text("PRAGMA table_info(pets)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "marks" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN marks TEXT"))
-            if "clinic_url" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN clinic_url VARCHAR(500)"))
-            if "doctor_name" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN doctor_name VARCHAR(200)"))
-            if "avatar_bg" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN avatar_bg VARCHAR(50) DEFAULT 'lavender'"))
-            if "avatar_accessory" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN avatar_accessory VARCHAR(50) DEFAULT 'none'"))
-            if "share_code" not in cols:
-                conn.execute(text("ALTER TABLE pets ADD COLUMN share_code VARCHAR(64)"))
-
-            rows = conn.execute(text("SELECT id FROM pets WHERE share_code IS NULL OR share_code = ''")).fetchall()
-            for r in rows:
-                code = models.generate_pet_share_code()
-                conn.execute(text("UPDATE pets SET share_code = :c WHERE id = :id"), {"c": code, "id": r[0]})
-            conn.commit()
-
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS pet_members (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pet_id INTEGER NOT NULL REFERENCES pets(id),
-                    user_id INTEGER NOT NULL REFERENCES users(id),
-                    role VARCHAR(50) DEFAULT 'co_owner',
-                    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.commit()
-
-            res = conn.execute(text("PRAGMA table_info(meal_plans)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "end_time" not in cols:
-                conn.execute(text("ALTER TABLE meal_plans ADD COLUMN end_time VARCHAR(20)"))
-
-            res = conn.execute(text("PRAGMA table_info(health_records)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "next_date" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN next_date DATE"))
-            if "file_name" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN file_name VARCHAR(255)"))
-            if "file_data" not in cols:
-                conn.execute(text("ALTER TABLE health_records ADD COLUMN file_data TEXT"))
-
-            res = conn.execute(text("PRAGMA table_info(reminders)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "at" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN at VARCHAR(50)"))
-            if "interval_months" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN interval_months INTEGER"))
-            if "food" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN food VARCHAR(200)"))
-            if "status" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN status VARCHAR(50) DEFAULT 'pending'"))
-            if "done_by" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN done_by VARCHAR(100)"))
-            if "completed_at" not in cols:
-                conn.execute(text("ALTER TABLE reminders ADD COLUMN completed_at DATETIME"))
-
-            res = conn.execute(text("PRAGMA table_info(feeding_logs)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "reminder_id" not in cols:
-                conn.execute(text("ALTER TABLE feeding_logs ADD COLUMN reminder_id INTEGER"))
-            if "completion_day" not in cols:
-                conn.execute(text("ALTER TABLE feeding_logs ADD COLUMN completion_day VARCHAR(20)"))
-
-            res = conn.execute(text("PRAGMA table_info(shopping_items)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "bought_by" not in cols:
-                conn.execute(text("ALTER TABLE shopping_items ADD COLUMN bought_by VARCHAR(100)"))
-
-            conn.commit()
-    except Exception as e:
-        print("[PetCare DB Init] Column check notice:", e)
-
-ensure_db_columns()
+# Schema changes are applied explicitly before starting workers.
+from schema import check_schema
+check_schema(engine)
+if PRODUCTION and os.environ.get('MIGRATION_DATABASE_URL'):
+    raise RuntimeError('Migration credentials must not be loaded into the web process')
+if PRODUCTION or os.getenv('ENFORCE_DB_PERMISSIONS') == 'true':
+    from db_security import assert_runtime_permissions
+    assert_runtime_permissions(engine)
 
 OPENAPI_TAGS = [
     {
@@ -167,6 +89,28 @@ app = FastAPI(
     openapi_tags=OPENAPI_TAGS,
 )
 
+if PRODUCTION:
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    allowed_hosts = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '').split(',') if host.strip()]
+    if not allowed_hosts or '*' in allowed_hosts:
+        raise RuntimeError('Set explicit ALLOWED_HOSTS for production')
+    app.add_middleware(HTTPSRedirectMiddleware)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+from security import SecurityMiddleware
+app.add_middleware(SecurityMiddleware, production=PRODUCTION)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    # Never echo passwords, base64 files or complete request payloads in errors.
+    return JSONResponse(status_code=422, content={'detail': [
+        {'loc': list(error['loc']), 'msg': error['msg'], 'type': error['type']}
+        for error in exc.errors()
+    ]})
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -187,12 +131,28 @@ def get_user_pet_or_404(pet_id: int, user_id: int, db: Session, write: bool = Fa
             models.PetMember.pet_id == pet_id,
             models.PetMember.user_id == user_id
         ).first()
-        if not is_member or (is_member.expires_at and is_member.expires_at <= datetime.utcnow()) or (write and is_member.role == "viewer"):
+        if not is_member or is_member.role not in {"viewer", "editor", "co_owner"} or (is_member.expires_at and is_member.expires_at <= datetime.utcnow()) or (write and is_member.role not in {"editor", "co_owner"}):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="У вас нет доступа к этому питомцу"
             )
     return pet
+
+def pet_response(pet, user_id, detail=False):
+    schema = schemas.PetDetailOut if detail else schemas.PetOut
+    result = schema.model_validate(pet)
+    if pet.owner_id != user_id:
+        result.share_code = None
+    return result
+
+
+def active_member_pet_ids(db, user_id):
+    return [row.pet_id for row in db.query(models.PetMember).filter(
+        models.PetMember.user_id == user_id,
+        models.PetMember.role.in_(['viewer', 'editor', 'co_owner']),
+        or_(models.PetMember.expires_at.is_(None), models.PetMember.expires_at > datetime.utcnow()),
+    ).all()]
+
 
 def user_has_pet_access(pet_id: int, user_id: int, db: Session, write: bool = False) -> bool:
     pet = db.query(models.Pet).filter(models.Pet.id == pet_id).first()
@@ -201,7 +161,7 @@ def user_has_pet_access(pet_id: int, user_id: int, db: Session, write: bool = Fa
     if pet.owner_id == user_id:
         return True
     member = db.query(models.PetMember).filter(models.PetMember.pet_id == pet_id, models.PetMember.user_id == user_id).first()
-    return bool(member and (not member.expires_at or member.expires_at > datetime.utcnow()) and (not write or member.role != "viewer"))
+    return bool(member and member.role in {"viewer", "editor", "co_owner"} and (not member.expires_at or member.expires_at > datetime.utcnow()) and (not write or member.role in {"editor", "co_owner"}))
 
 # =====================================================================
 # 1. АВТОРИЗАЦИЯ И СЕССИЯ (/api/v1/auth)
@@ -243,7 +203,6 @@ def seed_demo_account(db: Session, account_id: int) -> models.User:
     email = "demo2@petcare.app" if is_acc2 else "demo1@petcare.app"
     legacy_email = "demo2@petcare.local" if is_acc2 else "demo1@petcare.local"
     full_name = "Анна" if is_acc2 else "Илья"
-    pwd = "demo_password_2" if is_acc2 else "demo_password_1"
 
     user = db.query(models.User).filter((models.User.email == email) | (models.User.email == legacy_email)).first()
     if user:
@@ -262,7 +221,7 @@ def seed_demo_account(db: Session, account_id: int) -> models.User:
         user = models.User(
             full_name=full_name,
             email=email,
-            hashed_password=get_password_hash(pwd),
+            hashed_password=get_password_hash(secrets.token_urlsafe(32)),
             timezone="Europe/Moscow"
         )
         db.add(user)
@@ -741,7 +700,7 @@ def demo_login(account_id: int, db: Session = Depends(get_db)):
         return {"access_token": token, "token_type": "bearer", "user": user}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка демо-входа: {str(e)}")
+        raise HTTPException(status_code=500, detail="Не удалось подготовить демо-аккаунт")
 
 
 @app.get("/api/v1/auth/session", response_model=schemas.UserOut, tags=["Авторизация и профиль"], summary="Проверка текущей сессии пользователя")
@@ -783,7 +742,7 @@ def create_pet(
     from features import enforce_pet_limit
     enforce_pet_limit(db, current_user)
 
-    code = pet_data.share_code or models.generate_pet_share_code()
+    code = models.generate_pet_share_code()
     new_pet = models.Pet(
         owner_id=current_user.id,
         name=pet_data.name,
@@ -815,6 +774,8 @@ def join_pet_by_code(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    from features import enforce_quota
+    enforce_quota(db, 'invite:'+str(current_user.id)+':'+datetime.utcnow().strftime('%Y%m%d%H'), 20)
     code = payload.invite_code.strip().upper().replace(" ", "")
     if not code:
         raise HTTPException(status_code=400, detail="Введите код совместного ухода")
@@ -825,15 +786,19 @@ def join_pet_by_code(
 
     if pet.owner_id == current_user.id:
         pet.is_shared = True
-        return pet
+        return pet_response(pet, current_user.id)
 
     existing = db.query(models.PetMember).filter(
         models.PetMember.pet_id == pet.id,
         models.PetMember.user_id == current_user.id
     ).first()
     if existing:
+        if existing.role not in {'viewer', 'editor', 'co_owner'}:
+            raise HTTPException(403, 'Доступ отозван. Обратитесь к владельцу.')
+        if existing.expires_at and existing.expires_at <= datetime.utcnow():
+            raise HTTPException(403, 'Срок доступа истёк. Обратитесь к владельцу.')
         pet.is_shared = True
-        return pet
+        return pet_response(pet, current_user.id)
 
     from features import enforce_pet_limit
     enforce_pet_limit(db, current_user)
@@ -850,7 +815,7 @@ def join_pet_by_code(
     db.commit()
     db.refresh(pet)
     pet.is_shared = True
-    return pet
+    return pet_response(pet, current_user.id)
 
 
 @app.get("/api/v1/pets", response_model=List[schemas.PetOut], tags=["Питомцы и совместный уход"], summary="Список всех питомцев пользователя (своих и совместных)")
@@ -858,7 +823,7 @@ def get_user_pets(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = [m.pet_id for m in db.query(models.PetMember).filter(models.PetMember.user_id == current_user.id).all() if not m.expires_at or m.expires_at > datetime.utcnow()]
+    member_pet_ids = active_member_pet_ids(db, current_user.id)
     pets = db.query(models.Pet).filter(
         (models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids))
     ).all()
@@ -870,7 +835,7 @@ def get_user_pets(
         p.is_shared = (p.owner_id != current_user.id or bool(p.members))
     if needs_commit:
         db.commit()
-    return pets
+    return [pet_response(p, current_user.id) for p in pets]
 
 
 @app.get("/api/v1/pets/{pet_id}", response_model=schemas.PetDetailOut, tags=["Питомцы и совместный уход"], summary="Получить полную карточку питомца со всеми записями")
@@ -881,7 +846,7 @@ def get_pet(
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
     pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
-    return pet
+    return pet_response(pet, current_user.id, detail=True)
 
 
 @app.put("/api/v1/pets/{pet_id}", response_model=schemas.PetOut, tags=["Питомцы и совместный уход"], summary="Обновить карточку питомца")
@@ -900,7 +865,7 @@ def update_pet(
     db.commit()
     db.refresh(pet)
     pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
-    return pet
+    return pet_response(pet, current_user.id)
 
 
 @app.delete("/api/v1/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Питомцы и совместный уход"], summary="Удалить питомца или выйти из совместного ухода")
@@ -911,6 +876,14 @@ def delete_pet(
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
     if pet.owner_id == current_user.id:
+        # Hidden PetMatch records still have enforced PostgreSQL foreign keys.
+        profile_ids = select(models.MatchProfile.id).where(models.MatchProfile.pet_id == pet_id)
+        db.query(models.MatchDecision).filter(or_(
+            models.MatchDecision.from_pet_id == pet_id,
+            models.MatchDecision.to_pet_id == pet_id,
+            models.MatchDecision.to_profile_id.in_(profile_ids),
+        )).delete(synchronize_session=False)
+        db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).delete(synchronize_session=False)
         db.delete(pet)
     else:
         member = db.query(models.PetMember).filter(
@@ -1061,6 +1034,18 @@ def add_prescription(
         status=presc_data.status
     )
     db.add(new_presc)
+    db.flush()
+    if presc_data.status == 'Активно' and presc_data.times:
+        clocks = list(dict.fromkeys(re.split(r'[,;\s]+', presc_data.times.strip())))
+        days = re.fullmatch(r'(\d{1,3})(?:\s*(?:день|дня|дней|дн\.?))?', (presc_data.duration or '').strip())
+        if not days or not 1 <= int(days[1]) <= 365 or not 1 <= len(clocks) <= 6 or any(not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', clock) for clock in clocks):
+            raise HTTPException(422, 'Для напоминаний укажите длительность в днях (1–365) и время ЧЧ:ММ через запятую (до 6 приёмов в день).')
+        for offset in range(int(days[1])):
+            day = presc_data.start_date + timedelta(days=offset)
+            for clock in clocks:
+                db.add(models.Reminder(pet_id=pet.id, prescription_id=new_presc.id,
+                    title=(presc_data.name + (' · ' + presc_data.dose if presc_data.dose else ''))[:255],
+                    reminder_type='Препарат', due_date=day, due_time=clock, at=day.isoformat()+'T'+clock+':00+03:00'))
     db.commit()
     db.refresh(new_presc)
     return new_presc
@@ -1085,6 +1070,8 @@ def delete_prescription(
     pr = db.query(models.Prescription).filter(models.Prescription.id == presc_id).first()
     if not pr or not user_has_pet_access(pr.pet_id, current_user.id, db, write=True):
         raise HTTPException(status_code=404, detail="Назначение не найдено")
+    db.query(models.Reminder).filter(models.Reminder.prescription_id == pr.id, models.Reminder.status == 'pending').delete(synchronize_session=False)
+    db.query(models.Reminder).filter(models.Reminder.prescription_id == pr.id).update({'prescription_id':None}, synchronize_session=False)
     db.delete(pr)
     db.commit()
     return None
@@ -1165,6 +1152,11 @@ def add_feeding_log(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    for model, record_id in ((models.MealPlan, log_data.meal_plan_id), (models.Reminder, log_data.reminder_id)):
+        if record_id is not None:
+            record = db.get(model, record_id)
+            if not record or record.pet_id != pet.id:
+                raise HTTPException(404, 'Связанная запись не найдена у этого питомца')
     new_log = models.FeedingLog(
         pet_id=pet.id,
         food=log_data.food,
@@ -1266,7 +1258,7 @@ def get_all_reminders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = [m.pet_id for m in db.query(models.PetMember).filter(models.PetMember.user_id == current_user.id).all() if not m.expires_at or m.expires_at > datetime.utcnow()]
+    member_pet_ids = active_member_pet_ids(db, current_user.id)
     query = db.query(models.Reminder).join(models.Pet)
     if member_pet_ids:
         query = query.filter((models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids)))
@@ -1421,6 +1413,25 @@ def get_documents(
     return pet.documents
 
 
+@app.get('/api/v1/documents/{doc_id}/download', tags=['Документы и ИИ-распознавание'])
+def download_document(doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    from uploads import validate_attachment
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    import base64
+    doc = db.get(models.Document, doc_id)
+    if not doc: raise HTTPException(404, 'Документ не найден')
+    get_user_pet_or_404(doc.pet_id, current_user.id, db)
+    if not doc.file_data: raise HTTPException(404, 'У документа нет вложения')
+    try: value, filename = validate_attachment(doc.file_data, doc.file_name)
+    except ValueError: raise HTTPException(415, 'Вложение не прошло проверку безопасности') from None
+    data = base64.b64decode(value.split(',', 1)[1])
+    return Response(data, media_type='application/octet-stream', headers={
+        'Content-Disposition': "attachment; filename=attachment; filename*=UTF-8''" + quote(filename, safe=''),
+        'Content-Security-Policy': "sandbox; default-src 'none'",
+    })
+
+
 @app.delete("/api/v1/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Документы и ИИ-распознавание"], summary="Удалить документ из архива")
 def delete_document(
     doc_id: int,
@@ -1557,68 +1568,6 @@ _PLACEHOLDER_KEYS = {
 }
 
 
-def _load_dotenv_files() -> None:
-    """Чтение переменных из .env / .env.local / .env.example без внешних зависимостей."""
-    base_dir = Path(__file__).resolve().parent
-    for filename in (".env", ".env.local", ".env.example"):
-        env_path = base_dir / filename
-        if not env_path.is_file():
-            continue
-        try:
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):].strip()
-                key, val = line.split("=", 1)
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if not key or val in _PLACEHOLDER_KEYS:
-                    continue
-                if not os.environ.get(key) or os.environ.get(key) in _PLACEHOLDER_KEYS:
-                    os.environ[key] = val
-        except OSError:
-            pass
-
-
-_load_dotenv_files()
-
-LLM_PROXY_URL = os.getenv("LLM_PROXY_URL", "https://llm-proxy.spirit.t-education.com")
-LLM_API_KEY = (
-    os.getenv("LLM_API_KEY")
-    or os.getenv("LLM_PROXY_API_KEY")
-    or os.getenv("API_KEY")
-    or os.getenv("SPIRIT_API_KEY")
-    or os.getenv("VISION_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or ""
-)
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-
-
-def _resolve_api_key() -> str:
-    """Возвращает очищенный API-ключ прокси (перечитывая .env при необходимости)."""
-    raw_key = LLM_API_KEY
-    if not raw_key or raw_key in _PLACEHOLDER_KEYS:
-        _load_dotenv_files()
-        raw_key = (
-            os.getenv("LLM_API_KEY")
-            or os.getenv("LLM_PROXY_API_KEY")
-            or os.getenv("API_KEY")
-            or os.getenv("SPIRIT_API_KEY")
-            or os.getenv("VISION_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or ""
-        )
-    cleaned = raw_key.strip().strip('"').strip("'")
-    if cleaned.lower().startswith("bearer "):
-        cleaned = cleaned[7:].strip()
-    if cleaned in _PLACEHOLDER_KEYS:
-        return ""
-    return cleaned
-
-
 from ocr import recognize_text, require_ocr_configuration
 
 
@@ -1631,23 +1580,12 @@ async def recognize_document(
     from features import enforce_quota, premium
     if not premium(current_user):
         raise HTTPException(403, "ИИ-распознавание доступно в платной версии. Запросите доступ у администратора.")
-    allowed_types = {"image/jpeg", "image/png", "image/webp"}
-    if file.content_type not in allowed_types:
-        raise HTTPException(415, "Поддерживаются JPG, PNG и WebP")
-
-    limit = 10 * 1024 * 1024
+    from uploads import checked_upload, MAX_FILE_BYTES
     try:
-        photo = await file.read(limit + 1)
+        photo = await file.read(MAX_FILE_BYTES + 1)
     finally:
         await file.close()
-
-    if not photo:
-        raise HTTPException(400, "Файл пуст")
-    valid = (file.content_type == "image/png" and photo.startswith(bytes.fromhex("89504e470d0a1a0a"))) or (file.content_type == "image/jpeg" and photo.startswith(bytes.fromhex("ffd8ff"))) or (file.content_type == "image/webp" and photo[:4] == b"RIFF" and photo[8:12] == b"WEBP")
-    if not valid:
-        raise HTTPException(415, "Содержимое файла не соответствует формату изображения")
-    if len(photo) > limit:
-        raise HTTPException(413, "Максимальный размер — 10 МБ")
+    checked_upload(photo, file.content_type)
 
     require_ocr_configuration()
     enforce_quota(db, "ocr-user:"+str(current_user.id)+":"+datetime.utcnow().strftime("%Y%m%d"), 10)
@@ -1732,6 +1670,7 @@ def _profile_to_dict(mp: models.MatchProfile) -> dict:
         "owner_name": mp.owner_name,
         "owner_contact": mp.owner_contact,
         "photo": mp.photo,
+        "photos": mp.photos if mp.photos is not None else ([mp.photo] if mp.photo else []),
         "is_published": mp.is_published,
     }
 
@@ -1900,13 +1839,13 @@ def save_pet_match_profile(
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
     existing = db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).first()
     if existing:
-        existing.name = pet.name
-        existing.species = pet.species
-        existing.breed = pet.breed
-        existing.birth_date = pet.birth_date.isoformat()
-        existing.sex = pet.sex or "Неизвестно"
+        existing.name = data.name
+        existing.species = data.species
+        existing.breed = data.breed or "Метис"
+        existing.birth_date = data.birth_date
+        existing.sex = data.sex or "Неизвестно"
         existing.vaccinated = data.vaccinated or "Не указано"
-        existing.sterilized = "Да" if pet.sterilized else "Нет"
+        existing.sterilized = data.sterilized or "Нет"
         existing.purpose = data.purpose or "Совместные прогулки и игры"
         existing.city = data.city or ""
         existing.bio = data.bio
@@ -1914,29 +1853,34 @@ def save_pet_match_profile(
         existing.owner_contact = data.owner_contact
         if data.photo:
             existing.photo = data.photo
+        elif not existing.photo:
+            existing.photo = pet.photo_file_id
         existing.is_published = data.is_published if data.is_published is not None else True
     else:
         existing = models.MatchProfile(
             pet_id=pet_id,
             owner_id=current_user.id,
-            name=pet.name,
-            species=pet.species,
-            breed=pet.breed,
-            birth_date=pet.birth_date.isoformat(),
-            sex=pet.sex or "Неизвестно",
+            name=data.name,
+            species=data.species,
+            breed=data.breed or "Метис",
+            birth_date=data.birth_date,
+            sex=data.sex or "Неизвестно",
             vaccinated=data.vaccinated or "Не указано",
-            sterilized="Да" if pet.sterilized else "Нет",
+            sterilized=data.sterilized or "Нет",
             purpose=data.purpose or "Совместные прогулки и игры",
             city=data.city or "",
             bio=data.bio,
             owner_name=data.owner_name or current_user.full_name,
             owner_contact=data.owner_contact,
             photo=data.photo or pet.photo_file_id,
-            is_published=data.is_published if data.is_published is not None else True
+            is_published=True
         )
         db.add(existing)
-    if data.photo:
-        pet.photo_file_id = data.photo
+    if data.photos is not None:
+        existing.photos = data.photos
+        existing.photo = data.photos[0] if data.photos else None
+    elif data.photo:
+        existing.photos = [data.photo]
     db.commit()
     db.refresh(existing)
     return _profile_to_dict(existing)
@@ -2013,13 +1957,10 @@ def serve_styles():
 
 @app.get("/", include_in_schema=False)
 def serve_frontend():
-    index_path = Path(__file__).resolve().parent / "index.html"
+    index_path = Path(__file__).resolve().parent / "static" / "frontend" / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return {"status": "ok", "service": "PetCare API v1"}
-
-
-
+    raise HTTPException(status_code=503, detail="Frontend build missing. Run npm ci && npm run build before starting PetCare.")
 
 
 from features import install_features

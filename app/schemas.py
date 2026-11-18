@@ -1,6 +1,7 @@
 from datetime import date as date_type, datetime as datetime_type
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator, field_validator
+from uploads import validate_attachment, MAX_PHOTO_BYTES, safe_stored_url
 
 # ----------------- ПОЛЬЗОВАТЕЛЬ -----------------
 
@@ -80,9 +81,16 @@ class HealthRecordBase(BaseModel):
     file_data: Optional[str] = None
 
 class HealthRecordCreate(HealthRecordBase):
-    pass
+    @model_validator(mode='after')
+    def validate_file(self):
+        self.file_data, self.file_name = validate_attachment(self.file_data, self.file_name)
+        return self
 
 class HealthRecordOut(HealthRecordBase):
+    @field_validator('file_data')
+    @classmethod
+    def safe_file(cls, value): return safe_stored_url(value)
+
     id: int
     pet_id: int
 
@@ -173,14 +181,24 @@ class NutritionLogOut(NutritionLogBase):
 
 # ----------------- ДОКУМЕНТЫ -----------------
 
-class DocumentCreate(BaseModel):
+class DocumentBase(BaseModel):
     title: str
     doc_type: str = "other"
     date: date_type
     file_name: Optional[str] = None
     file_data: Optional[str] = None
 
-class DocumentOut(DocumentCreate):
+class DocumentCreate(DocumentBase):
+    @model_validator(mode='after')
+    def validate_file(self):
+        self.file_data, self.file_name = validate_attachment(self.file_data, self.file_name)
+        return self
+
+class DocumentOut(DocumentBase):
+    @field_validator('file_data')
+    @classmethod
+    def safe_file(cls, value): return safe_stored_url(value)
+
     id: int
     pet_id: int
 
@@ -238,7 +256,10 @@ class PetBase(BaseModel):
     share_code: Optional[str] = None
 
 class PetCreate(PetBase):
-    pass
+    @model_validator(mode='after')
+    def validate_photo(self):
+        self.photo_file_id, _ = validate_attachment(self.photo_file_id, images_only=True, limit=MAX_PHOTO_BYTES)
+        return self
 
 class PetJoinByCode(BaseModel):
     invite_code: str
@@ -259,7 +280,16 @@ class PetUpdate(BaseModel):
     avatar_bg: Optional[str] = None
     avatar_accessory: Optional[str] = None
 
+    @model_validator(mode='after')
+    def validate_photo(self):
+        self.photo_file_id, _ = validate_attachment(self.photo_file_id, images_only=True, limit=MAX_PHOTO_BYTES)
+        return self
+
 class PetOut(PetBase):
+    @field_validator('photo_file_id')
+    @classmethod
+    def safe_photo(cls, value): return safe_stored_url(value, image=True)
+
     id: int
     owner_id: int
     share_code: Optional[str] = None
@@ -269,6 +299,10 @@ class PetOut(PetBase):
         from_attributes = True
 
 class PetDetailOut(PetBase):
+    @field_validator('photo_file_id')
+    @classmethod
+    def safe_photo(cls, value): return safe_stored_url(value, image=True)
+
     id: int
     owner_id: int
     share_code: Optional[str] = None
@@ -307,10 +341,24 @@ class MatchProfileCreate(BaseModel):
     owner_name: Optional[str] = "Владелец"
     owner_contact: str
     photo: Optional[str] = None
+    photos: Optional[List[str]] = Field(default=None, max_length=5)
     is_published: Optional[bool] = True
 
+
+    @model_validator(mode='after')
+    def validate_photo(self):
+        self.photo, _ = validate_attachment(self.photo, images_only=True, limit=MAX_PHOTO_BYTES)
+        if self.photos is not None:
+            if any(not photo for photo in self.photos):
+                raise ValueError("Фото не должно быть пустым")
+            self.photos = [validate_attachment(photo, images_only=True, limit=MAX_PHOTO_BYTES)[0] for photo in self.photos]
+            if sum(len(payload) * 3 // 4 - (len(payload) - len(payload.rstrip("="))) for payload in (photo.split(",", 1)[1] for photo in self.photos)) > MAX_PHOTO_BYTES:
+                raise ValueError("Все фото анкеты вместе должны быть не больше 10 МБ")
+        return self
 
 class MatchDecisionCreate(BaseModel):
     target_profile_id: int
     decision: str  # 'like' or 'skip'
 
+
+# PetMatch photos also enter browser image elements.
