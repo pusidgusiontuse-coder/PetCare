@@ -69,7 +69,7 @@ jobs:
       - run: python -m alembic upgrade head
       - run: python -m pytest app -q --junitxml=reports/pytest.xml
       - run: python -m alembic check
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
@@ -130,7 +130,7 @@ jobs:
           python tests/usability_browser.py
           python tests/hierarchy_browser.py
           python tests/security_browser.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: frontend-build
           path: app/static/frontend/
@@ -138,7 +138,7 @@ jobs:
           retention-days: 7
       - name: Upload interface diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: interface-diagnostics
           path: |
