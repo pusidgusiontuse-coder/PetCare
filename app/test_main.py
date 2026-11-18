@@ -336,7 +336,7 @@ class TestPetCareCoreAPI(unittest.TestCase):
             ok_resp = self.client.post(
                 "/api/v1/documents/recognize",
                 headers=self.headers1,
-                files={"file": ("passport.jpg", b"\xff\xd8\xff\xe0JFIF", "image/jpeg")},
+                files={"file": ("passport.png", __import__("test_security_features").valid_image(), "image/png")},
             )
         self.assertEqual(ok_resp.status_code, 200)
         self.assertEqual(ok_resp.json(), {"text": "Паспорт питомца: прививка от бешенства"})

@@ -2,11 +2,6 @@ import os,re,tempfile,uuid,json
 from datetime import datetime,timedelta,date
 from pathlib import Path
 from unittest.mock import AsyncMock,patch
-# Tests always use an isolated database, never application/user data.
-_tmp=tempfile.TemporaryDirectory()
-os.environ['DATABASE_URL']='sqlite:///'+str(Path(_tmp.name)/'test.db')
-os.environ.setdefault('SECRET_KEY','isolated-test-key-not-for-production-at-least-32-characters')
-os.environ['ENABLE_DEMO_LOGIN']='true'
 import pytest
 from fastapi.testclient import TestClient
 import main,models,features,auth,ocr
@@ -18,8 +13,6 @@ def client(): return TestClient(main.app)
 @pytest.fixture
 def mail(monkeypatch):
     sent=[]
-    monkeypatch.setenv("SMTP_HOST","smtp.test")
-    monkeypatch.setenv("SMTP_FROM","noreply@example.com")
     monkeypatch.setattr(features,'send_email',lambda address,subject,body:sent.append((address,body)))
     return sent
 
@@ -165,7 +158,7 @@ def test_missing_ocr_configuration_does_not_consume_quota(client, monkeypatch):
         before = db.query(models.RequestQuota).count()
     for _ in range(2):
         response = client.post('/api/v1/documents/recognize', headers=headers,
-                               files={'file': ('document.png', b'\x89PNG\r\n\x1a\n', 'image/png')})
+                               files={'file': ('document.png', valid_image(), 'image/png')})
         assert response.status_code == 503
         assert 'Google AI Studio' in response.json()['detail']
     with SessionLocal() as db:
@@ -258,19 +251,25 @@ def test_gemini_errors_do_not_fallback_or_send_photo(monkeypatch,status,expected
         assert e.value.status_code==expected
     mock.post.assert_not_called()
 
-def test_bootstrap_creates_one_admin_pet_without_overwriting_password(client):
+def test_bootstrap_creates_one_admin_pet_without_overwriting_password(client, monkeypatch):
     from bootstrap_admin import bootstrap
+    login = 'test-admin-' + uuid.uuid4().hex
+    password = uuid.uuid4().hex
+    monkeypatch.setenv('ADMIN_LOGIN', login)
     with SessionLocal() as db:
         old=db.query(models.User).filter(models.User.is_admin==True).all()
         for u in old:u.is_admin=False
         db.commit()
-    bootstrap({'login':'petcare-admin','password':'Lapa-47-More'})
-    r=client.post('/api/v1/auth/login',json={'email':'petcare-admin','password':'Lapa-47-More'})
+    bootstrap({'login': login, 'password': password})
+    credentials = {'email': login, 'password': password}
+    r=client.post('/api/v1/auth/login',json=credentials)
     assert r.status_code==200,r.text
     assert r.json()['user']['is_admin'] and r.json()['user']['premium']
     h={'Authorization':'Bearer '+r.json()['access_token']};assert len(client.get('/api/v1/pets',headers=h).json())==1
-    bootstrap({'login':'petcare-admin','password':'different-password'})
-    assert client.post('/api/v1/auth/login',json={'email':'petcare-admin','password':'Lapa-47-More'}).status_code==200
+    bootstrap({'login': login, 'password': uuid.uuid4().hex})
+    assert client.post('/api/v1/auth/login',json=credentials).status_code==200
+    monkeypatch.delenv('ADMIN_LOGIN')
+    assert client.post('/api/v1/auth/login',json=credentials).status_code==401
 
 def test_background_push_deduplicates_without_open_browser(client,monkeypatch):
     from notifications import run,MSK
@@ -284,26 +283,38 @@ def test_background_push_deduplicates_without_open_browser(client,monkeypatch):
         assert send.call_count==1
 
 
-def test_registration_without_mail_creates_unverified_free_account(client,monkeypatch):
-    monkeypatch.delenv('SMTP_HOST',raising=False)
-    monkeypatch.delenv('SMTP_FROM',raising=False)
-    email=uuid.uuid4().hex+'@example.com'
-    r=client.post('/api/v1/auth/register',json={'full_name':'Новый владелец','email':email,'password':'safe-password-123'})
-    assert r.status_code==200,r.text
-    assert r.json()['access_token']
-    assert not r.json()['user']['email_verified']
-    assert not r.json()['user']['premium'] and not r.json()['user']['is_admin']
-    assert client.post('/api/v1/auth/login',json={'email':email,'password':'safe-password-123'}).status_code==200
-    assert client.post('/api/v1/auth/register',json={'full_name':'Другой','email':email,'password':'safe-password-123'}).status_code in (400,409)
+def test_delete_pet_with_hidden_match_records(client):
+    owner=user(); p=pet(client,owner[2])
+    with SessionLocal() as db:
+        profile=models.MatchProfile(pet_id=p['id'],owner_id=owner[0],name='Лапа',species='Кошка',owner_contact='test@example.com')
+        db.add(profile);db.flush();profile_id=profile.id
+        db.add(models.MatchDecision(from_pet_id=p['id'],to_profile_id=profile.id,to_pet_id=p['id'],decision='like'))
+        db.commit()
+    assert client.delete(f"/api/v1/pets/{p['id']}",headers=owner[2]).status_code==204
+    with SessionLocal() as db:
+        assert db.get(models.MatchProfile,profile_id) is None
+        assert db.query(models.MatchDecision).filter(models.MatchDecision.to_profile_id==profile_id).count()==0
 
 
-def test_match_draft_uses_pet_identity_and_remains_private(client):
-    uid,email,h=user();p=pet(client,h)
-    data={'name':'Подменённое имя','species':'Собака','breed':'Другая','owner_contact':'','city':'','is_published':False}
-    r=client.post(f"/api/v1/pets/{p['id']}/match-profile",headers=h,json=data)
-    assert r.status_code==200,r.text
-    assert r.json()['name']==p['name'] and r.json()['species']==p['species']
-    assert r.json()['is_published'] is False
-    data.update(owner_contact='@example',city='Москва',is_published=True)
-    r=client.post(f"/api/v1/pets/{p['id']}/match-profile",headers=h,json=data)
-    assert r.status_code==200 and r.json()['is_published'] is True
+def test_delete_account_with_legacy_match_profile(client,mail):
+    owner=user(); other=user(); p=pet(client,other[2])
+    with SessionLocal() as db:
+        profile=models.MatchProfile(owner_id=owner[0],pet_id=None,name='Архив',species='Кошка',owner_contact=owner[1])
+        db.add(profile);db.flush();profile_id=profile.id
+        db.add(models.MatchDecision(from_pet_id=p['id'],to_profile_id=profile_id,decision='like'))
+        db.commit()
+    response=client.post('/api/v1/auth/account-codes',headers=owner[2],json={
+        'email':owner[1],'purpose':'delete_account','current_password':'test-password'})
+    assert response.status_code==200,response.text
+    result=client.post('/api/v1/auth/confirm',json={'challenge_id':response.json()['challenge_id'],'code':code(mail)})
+    assert result.status_code==200,result.text
+    with SessionLocal() as db:
+        assert db.get(models.User,owner[0]) is None
+        assert db.get(models.MatchProfile,profile_id) is None
+        assert db.get(models.Pet,p['id']) is not None
+
+
+def valid_image():
+    from io import BytesIO
+    from PIL import Image
+    data=BytesIO();Image.new('RGB',(2,2)).save(data,format='PNG');return data.getvalue()

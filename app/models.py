@@ -1,7 +1,12 @@
 from datetime import datetime, date
-from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text
+from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text as SQLText, JSON
+from sqlalchemy.dialects.mysql import MEDIUMTEXT, DATETIME, DOUBLE
 from sqlalchemy.orm import relationship
-from database import Base
+
+Text = SQLText().with_variant(MEDIUMTEXT(), "mysql")
+DateTime = DateTime().with_variant(DATETIME(fsp=6), "mysql")
+Float = Float().with_variant(DOUBLE(asdecimal=False), "mysql")
+from model_base import Base
 
 class User(Base):
     __tablename__ = "users"
@@ -172,6 +177,7 @@ class Reminder(Base):
     at = Column(String(50), nullable=True)
     interval_days = Column(Integer, nullable=True)
     interval_months = Column(Integer, nullable=True)
+    prescription_id = Column(Integer, ForeignKey("prescriptions.id", ondelete="SET NULL"), nullable=True)
     food = Column(String(200), nullable=True)
     status = Column(String(50), default="pending")  # pending, completed, skipped
     is_completed = Column(Boolean, default=False)
@@ -256,6 +262,7 @@ class MatchProfile(Base):
     owner_name = Column(String(120), default="Владелец")
     owner_contact = Column(String(255), nullable=False)
     photo = Column(Text, nullable=True)
+    photos = Column(JSON, nullable=True)
     is_published = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -313,7 +320,7 @@ class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    endpoint = Column(Text, nullable=False, unique=True)
+    endpoint = Column(SQLText().with_variant(String(768, collation="utf8mb4_bin"), "mysql"), nullable=False, unique=True)
     data = Column(Text, nullable=False)
 
 class DeliveryReceipt(Base):

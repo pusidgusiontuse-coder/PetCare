@@ -7,6 +7,7 @@ import re
 import secrets
 import smtplib
 import uuid
+import time
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -15,23 +16,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import inspect, text, or_, update
+from sqlalchemy import text, or_, update
 from sqlalchemy.exc import IntegrityError
 import models
 from database import get_db
 from settings import SECRET_KEY
-
-
-def migrate(engine):
-    additions = {"users": {"disabled": "BOOLEAN NOT NULL DEFAULT 0", "is_admin": "BOOLEAN NOT NULL DEFAULT 0", "premium_until": "DATETIME", "premium_permanent": "BOOLEAN NOT NULL DEFAULT 0", "email_verified": "BOOLEAN NOT NULL DEFAULT 0", "token_version": "INTEGER NOT NULL DEFAULT 0"}, "pet_members": {"expires_at": "DATETIME"}}
-    with engine.begin() as c:
-        for table, cols in additions.items():
-            if table not in inspect(c).get_table_names():
-                continue
-            existing = {x['name'] for x in inspect(c).get_columns(table)}
-            for name, dtype in cols.items():
-                if name not in existing:
-                    c.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {dtype}'))
 
 
 def send_email(address, subject, body):
@@ -57,13 +46,17 @@ def send_email(address, subject, body):
 
 def normalize_email(value):
     value = value.strip().lower()
+    try: value.encode('utf-8')
+    except UnicodeError: raise ValueError('Введите корректную электронную почту') from None
     if len(value) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value):
         raise ValueError('Введите корректную электронную почту')
     return value
 
 
 def password_ok(value):
-    if len(value) < 8 or len(value.encode('utf8')) > 72:
+    try: length = len(value.encode('utf8'))
+    except UnicodeError: raise HTTPException(422, 'Пароль содержит недопустимые символы') from None
+    if len(value) < 8 or length > 72:
         raise HTTPException(422, 'Пароль: минимум 8 символов, максимум 72 байта.')
     return value
 
@@ -90,6 +83,10 @@ class Registration(BaseModel):
     @field_validator('email')
     @classmethod
     def valid_email(cls, value): return normalize_email(value)
+
+class LoginInput(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
 
 class ProfileChange(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -121,8 +118,14 @@ def digest(challenge_id, code):
 
 def enforce_quota(db, key, limit):
     # Atomic counter, shared by processes (also used for OCR and email abuse limits).
-    db.execute(text('INSERT OR IGNORE INTO request_quotas (key, count) VALUES (:key, 0)'), {'key': key})
-    result = db.execute(text('UPDATE request_quotas SET count=count+1 WHERE key=:key AND count<:limit'), {'key': key, 'limit': limit})
+    quota = models.RequestQuota.__table__
+    if db.get_bind().dialect.name == 'mysql':
+        from sqlalchemy.dialects.mysql import insert
+        statement = insert(quota).values(key=key, count=0)
+        db.execute(statement.on_duplicate_key_update(count=quota.c.count))
+    else:
+        db.execute(text('INSERT INTO request_quotas (key, count) VALUES (:key, 0) ON CONFLICT (key) DO NOTHING'), {'key': key})
+    result = db.execute(update(quota).where(quota.c.key == key, quota.c.count < limit).values(count=quota.c.count + 1))
     db.commit()
     if result.rowcount != 1: raise HTTPException(429, 'Лимит попыток исчерпан. Попробуйте позже.')
 
@@ -199,26 +202,24 @@ def install_features(app):
         password_ok(data.password)
         enforce_quota(db, 'register:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 20)
         if db.query(models.User).filter(models.User.email==data.email).first(): raise HTTPException(400,'Этот адрес уже зарегистрирован. Войдите или восстановите пароль.')
-        # Registration must remain available before SMTP is connected. Never mark
-        # the address verified or grant premium/admin privileges without proof.
-        if not (os.getenv('SMTP_HOST') and os.getenv('SMTP_FROM')):
-            u=models.User(full_name=data.full_name,email=data.email,hashed_password=get_password_hash(data.password),timezone=data.timezone,email_verified=False)
-            db.add(u)
-            try: db.commit()
-            except IntegrityError:
-                db.rollback(); raise HTTPException(409,'Этот адрес уже зарегистрирован.')
-            return {'access_token':create_access_token({'sub':str(u.id)},device=request.headers.get('user-agent','Браузер')[:200]),'token_type':'bearer','user':user_json(u)}
         return issue_code(db, data.email, 'register', payload={'full_name':data.full_name, 'hashed_password':get_password_hash(data.password), 'timezone':data.timezone})
 
     @router.post('/auth/login')
-    def login(data: Registration | dict, request: Request, db=Depends(get_db)):
-        # Generic dict supports the existing email/password login form.
-        values = data if isinstance(data,dict) else data.model_dump()
+    def login(data: LoginInput, request: Request, db=Depends(get_db)):
+        values = data.model_dump()
         enforce_quota(db, 'login:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 60)
-        try: email=normalize_email('admin@petcare.local' if str(values.get('email','')).strip().lower()==os.getenv('ADMIN_LOGIN','petcare-admin') else str(values.get('email','')))
+        login = str(values.get('email', '')).strip()
+        admin_login = os.getenv('ADMIN_LOGIN', '').strip().lower()
+        try: email=normalize_email('admin@petcare.local' if admin_login and login.lower() == admin_login else login)
         except ValueError: raise HTTPException(401,'Неверная почта или пароль')
+        account_key = hmac.new(SECRET_KEY.encode(), email.encode(), hashlib.sha256).hexdigest()
+        window = str(int(time.time()) // 900)
+        enforce_quota(db, 'login-account:'+account_key+':'+window, 10)
         u=db.query(models.User).filter(models.User.email==email).first()
-        if not u or u.disabled or (email in ('demo1@petcare.app','demo2@petcare.app','demo1@petcare.local','demo2@petcare.local')) or not verify_password(str(values.get('password','')),u.hashed_password):
+        # Equal-cost password check for unknown users, without account-specific errors.
+        from auth import DUMMY_PASSWORD_HASH
+        password_valid = verify_password(values['password'], u.hashed_password if u else DUMMY_PASSWORD_HASH)
+        if not u or u.disabled or (email in ('demo1@petcare.app','demo2@petcare.app','demo1@petcare.local','demo2@petcare.local')) or not password_valid:
             raise HTTPException(401,'Неверная почта или пароль')
         return {'access_token':create_access_token({'sub':str(u.id)}, device=request.headers.get('user-agent','Браузер')[:200]),'token_type':'bearer','user':user_json(u)}
 
@@ -269,10 +270,18 @@ def install_features(app):
             u.email=item.email; u.email_verified=True; u.token_version+=1
             db.query(models.LoginSession).filter(models.LoginSession.user_id==u.id).update({'revoked':True})
         elif item.purpose=='delete_account':
-            for p in db.query(models.Pet).filter(models.Pet.owner_id==u.id).all():
-                profile_ids=[m.id for m in db.query(models.MatchProfile).filter(models.MatchProfile.pet_id==p.id).all()]
-                db.query(models.MatchDecision).filter(or_(models.MatchDecision.from_pet_id==p.id,models.MatchDecision.to_pet_id==p.id,models.MatchDecision.to_profile_id.in_(profile_ids))).delete(synchronize_session=False)
-                db.query(models.MatchProfile).filter(models.MatchProfile.pet_id==p.id).delete()
+            owned_pets = db.query(models.Pet).filter(models.Pet.owner_id==u.id).all()
+            pet_ids = [p.id for p in owned_pets]
+            profile_ids = [p.id for p in db.query(models.MatchProfile).filter(or_(
+                models.MatchProfile.owner_id==u.id, models.MatchProfile.pet_id.in_(pet_ids)
+            )).all()]
+            db.query(models.MatchDecision).filter(or_(
+                models.MatchDecision.from_pet_id.in_(pet_ids),
+                models.MatchDecision.to_pet_id.in_(pet_ids),
+                models.MatchDecision.to_profile_id.in_(profile_ids),
+            )).delete(synchronize_session=False)
+            db.query(models.MatchProfile).filter(models.MatchProfile.id.in_(profile_ids)).delete(synchronize_session=False)
+            for p in owned_pets:
                 db.delete(p)
             db.query(models.PetMember).filter(models.PetMember.user_id==u.id).delete()
             for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction):
@@ -364,7 +373,10 @@ def install_features(app):
 
     @router.post('/notifications/subscribe')
     def subscribe(data:dict,u=Depends(get_current_user),db=Depends(get_db)):
-        endpoint=data.get('endpoint',''); parsed=urlparse(endpoint)
+        endpoint = data.get('endpoint', '')
+        if not isinstance(endpoint, str) or len(endpoint) > 768:
+            raise HTTPException(422, 'Неверная push-подписка')
+        parsed=urlparse(endpoint)
         # Fixed provider allowlist prevents outbound requests to arbitrary/internal hosts.
         allowed=parsed.hostname and (parsed.hostname=='fcm.googleapis.com' or parsed.hostname.endswith('.push.services.mozilla.com') or parsed.hostname=='updates.push.services.mozilla.com' or parsed.hostname.endswith('.push.apple.com'))
         keys=data.get('keys',{})

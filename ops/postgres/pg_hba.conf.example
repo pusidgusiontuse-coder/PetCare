@@ -1,0 +1,9 @@
+# Merge with the server configuration; replace addresses and database names.
+# The application connects on a private network or through a Unix socket.
+# Keep PostgreSQL port 5432 closed to the public Internet in the firewall.
+local   petcare  petcare_migrator              peer
+hostssl petcare  petcare_app      10.20.0.10/32 scram-sha-256
+hostssl petcare  petcare_backup   10.20.0.20/32 scram-sha-256
+hostssl petcare  petcare_migrator 10.20.0.30/32 scram-sha-256
+host    petcare  all             0.0.0.0/0     reject
+host    petcare  all             ::/0          reject

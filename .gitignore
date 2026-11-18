@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+*.env
 *.db
 *.db-*
 *.sqlite*
@@ -13,9 +14,23 @@ data/
 *.zip
 *.before-*
 bootstrap-admin.json
+admin-access*.json
+local-access.json
 ДОСТУП_АДМИНИСТРАТОРА.txt
+*.p12
+*.pfx
 
 # Rebuilt using tools/fetch_ocr_assets.py (pinned SHA-256 manifest).
 app/static/ocr/vendor/
 dist/
 reports/
+
+# PostgreSQL backups and private libpq connection files
+*.dump
+*.backup
+.pgpass
+pg_service.conf
+
+# Frontend dependencies and compiled Vite assets
+node_modules/
+app/static/frontend/

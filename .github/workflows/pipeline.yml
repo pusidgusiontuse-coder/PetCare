@@ -10,26 +10,174 @@ jobs:
     name: Tests (Python 3.12)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: petcare
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: petcare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U petcare -d petcare_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       SECRET_KEY: ci-only-key-at-least-32-characters-do-not-use-in-production
-      DATABASE_URL: sqlite:////tmp/petcare-ci.db
+      DATABASE_URL: postgresql+psycopg://petcare:ci-only-password@127.0.0.1:5432/petcare_test
+      PETCARE_REQUIRE_BACKUP_TESTS: 'true'
+      TEST_DATABASE_URL: postgresql+psycopg://petcare:ci-only-password@127.0.0.1:5432/petcare_test
       ENABLE_DEMO_LOGIN: 'true'
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: app/requirements.txt
       - run: python -m pip install -r app/requirements.txt
+      - name: Install backup verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y restic
+          if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            sudo apt-get install -y curl ca-certificates gnupg
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl --fail --silent --show-error --location --retry 3 \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            pgdg_fingerprint=$(gpg --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+            test "$pgdg_fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/petcare-pgdg.list
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-17
+          fi
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - run: python scripts/check_secrets.py
       - run: python -m pip check
-      - run: python -m compileall -q app
-      - run: python -m pytest app/test_security_features.py app/test_main.py -q --junitxml=reports/pytest.xml
+      - run: python -m compileall -q app scripts migrations backup.py
+      - run: python -m alembic upgrade head
+      - run: python -m pytest app -q --junitxml=reports/pytest.xml
+      - run: python -m alembic check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
           path: reports/
           if-no-files-found: ignore
+  ui:
+    name: Interface (desktop and mobile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: petcare
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: petcare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U petcare -d petcare_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SECRET_KEY: ci-only-key-at-least-32-characters-do-not-use-in-production
+      DATABASE_URL: postgresql+psycopg://petcare:ci-only-password@127.0.0.1:5432/petcare_test
+      ENABLE_DEMO_LOGIN: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r app/requirements.txt -r tests/requirements-ui.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m alembic upgrade head
+      - name: Check interface
+        run: |
+          python -m uvicorn main:app --app-dir app --port 8002 > /tmp/petcare-ui.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"; cat /tmp/petcare-ui.log' EXIT
+          ready=false
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8002/api/v1/health; then ready=true; break; fi
+            sleep 1
+          done
+          $ready
+          python tests/ux_browser.py
+          python tests/forms_browser.py
+          python tests/wheels_browser.py
+          python tests/usability_browser.py
+          python tests/hierarchy_browser.py
+          python tests/security_browser.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: app/static/frontend/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload interface diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interface-diagnostics
+          path: |
+            reports/ui/
+            /tmp/petcare-ui.log
+            /tmp/petcare-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+  mysql:
+    name: MySQL hosting compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-mysql-password
+          MYSQL_DATABASE: petcare_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pci-only-mysql-password"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      SECRET_KEY: ci-only-key-at-least-32-characters-do-not-use-in-production
+      TEST_DATABASE_URL: mysql+pymysql://root:ci-only-mysql-password@127.0.0.1:3306/petcare_test?charset=utf8mb4
+      PETCARE_MYSQL_INTEGRATION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r app/requirements.txt
+      - run: python -m pytest app -q --disable-warnings
