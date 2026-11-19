@@ -16,8 +16,10 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     timezone = Column(String(50), default="Europe/Moscow", nullable=False)
+    theme = Column(String(24), server_default="olive-honey", nullable=False)
     disabled = Column(Boolean, default=False, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
+    admin_login = Column(String(64), unique=True, nullable=True)
     premium_until = Column(DateTime, nullable=True)
     premium_permanent = Column(Boolean, default=False, nullable=False)
     email_verified = Column(Boolean, default=False, nullable=False)
@@ -25,6 +27,18 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     pets = relationship("Pet", back_populates="owner", cascade="all, delete-orphan")
+
+
+class PremiumOrder(Base):
+    __tablename__ = "premium_orders"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    months = Column(Integer, nullable=False)
+    price = Column(Integer, nullable=False)
+    payment_id = Column(String(36), unique=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    granted_at = Column(DateTime)
 
 
 class Pet(Base):
@@ -297,6 +311,7 @@ class LoginSession(Base):
     expires_at = Column(DateTime, nullable=False)
     revoked = Column(Boolean, default=False, nullable=False)
     device = Column(String(200), default="Браузер")
+    ip_address = Column(String(45), nullable=True)
 
 class EmailChallenge(Base):
     __tablename__ = "email_challenges"
@@ -350,3 +365,16 @@ class AdminAudit(Base):
     target_id = Column(Integer, nullable=False)
     action = Column(String(100), nullable=False)
     at = Column(DateTime, default=datetime.utcnow)
+
+
+class LoginGuard(Base):
+    __tablename__ = "login_guards"
+    key = Column(String(80), primary_key=True)
+    failures = Column(Integer, nullable=False, default=0)
+    blocked_until = Column(DateTime, nullable=True)
+
+
+class SiteSetting(Base):
+    __tablename__ = "site_settings"
+    key = Column(String(60), primary_key=True)
+    value = Column(String(500), nullable=False)

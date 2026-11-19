@@ -18,7 +18,7 @@ class SecurityMiddleware:
             return await self.app(scope, receive, send)
         path = scope['path']
         headers = dict(scope.get('headers', []))
-        limit = 16 * 1024 if path.startswith('/api/v1/auth/') else 14 * 1024 * 1024
+        limit = 16 * 1024 if path.startswith(('/api/v1/auth/', '/api/v1/admin/')) else 14 * 1024 * 1024
         try:
             length = int(headers.get(b'content-length', b'0'))
             if length < 0: raise ValueError
@@ -52,8 +52,8 @@ class SecurityMiddleware:
                     (b'referrer-policy', b'no-referrer'),
                     (b'permissions-policy', b'camera=(), microphone=(), geolocation=()'),
                 ])
-                if path == '/' or path.startswith('/static/') and any(k.lower() == b'content-type' and b'text/html' in v for k, v in response_headers): response_headers.append((b'content-security-policy', CSP.encode()))
-                if path == '/' or path.startswith('/api/') or path == '/static/frontend/index.html':
+                if path in ('/', '/admin') or path.startswith('/static/') and any(k.lower() == b'content-type' and b'text/html' in v for k, v in response_headers): response_headers.append((b'content-security-policy', CSP.encode()))
+                if path in ('/', '/admin') or path.startswith('/api/') or path == '/static/frontend/index.html':
                     response_headers = [(k, v) for k, v in response_headers if k.lower() != b'cache-control']
                     response_headers.append((b'cache-control', b'no-store'))
                 if self.production: response_headers.append((b'strict-transport-security', b'max-age=31536000'))

@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright, expect
 BASE = os.environ.get('PETCARE_TEST_URL', 'http://127.0.0.1:8002')
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    context = browser.new_context(viewport={'width':375,'height':812}, reduced_motion='reduce')
+    context = browser.new_context(locale='ru-RU', viewport={'width':375,'height':812}, reduced_motion='reduce')
     response = context.request.post(BASE+'/api/v1/auth/demo-login/1')
     assert response.ok
     context.add_init_script("window.__PETCARE_TEST__=true;")
@@ -31,9 +31,19 @@ with sync_playwright() as p:
         pets_link=page.locator('.nav .mobile-pets')
         pets_link.hover()
         expect(pets_link).to_have_css('background-color','rgba(0, 0, 0, 0)')
-        expect(pets_link.locator('.nav-label')).to_have_css('color','rgb(27, 73, 52)')
-        expect(pets_link.locator('svg')).to_have_css('color','rgb(255, 254, 250)')
-        circle=page.locator('.mobile-pets svg').bounding_box()
+        colors = page.evaluate('''() => {
+            const label = document.createElement('span');
+            document.body.append(label);
+            label.style.color = 'var(--accent-dark)';
+            const text = getComputedStyle(label).color;
+            label.style.color = 'var(--on-accent)';
+            const icon = getComputedStyle(label).color;
+            label.remove();
+            return {text, icon};
+        }''')
+        expect(pets_link.locator('.nav-label')).to_have_css('color',colors['text'])
+        expect(pets_link.locator('svg:not(.guest-lock-icon)')).to_have_css('color',colors['icon'])
+        circle=pets_link.locator('svg:not(.guest-lock-icon)').bounding_box()
         assert abs(circle['x']+circle['width']/2-width/2)<2
         page.screenshot(path=f'/tmp/petcare-menu-audit-{width}.png')
     page.set_viewport_size({'width':375,'height':812})
@@ -84,9 +94,21 @@ with sync_playwright() as p:
     assert not errors, errors
     context.close()
     # Authentication errors should stay in the form and receive focus.
-    context=browser.new_context()
+    context=browser.new_context(locale='ru-RU')
     page=context.new_page();page.goto(BASE);page.wait_for_load_state('networkidle')
-    page.locator('#api-open').click()
+    expect(page.locator('#guest-preview')).to_be_visible()
+    expect(page.locator('.section:visible')).to_have_count(0)
+    expect(page.locator('.guest-card .guest-lock-icon')).to_have_count(5)
+    demo_requests = []
+    page.on('request', lambda request: demo_requests.append(request.url) if '/auth/demo-login/' in request.url else None)
+    page.locator('.guest-card').nth(1).click()
+    expect(page.locator('#auth-dialog')).to_be_visible()
+    page.locator('#tab-register').click()
+    expect(page.locator('#auth-dialog-title')).to_have_text('Регистрация в PetCare')
+    page.locator('#auth-guest-preview').click()
+    expect(page.locator('#guest-preview')).to_be_visible()
+    assert not demo_requests and page.evaluate("localStorage.getItem('petcare_jwt')") is None
+    page.locator('.nav [data-page=health]').click()
     pending=[]
     page.route('**/api/v1/auth/login',lambda route:pending.append(route))
     page.locator('#auth-email').fill('user@example.com');page.locator('#auth-password').fill('wrong-password')
@@ -94,9 +116,26 @@ with sync_playwright() as p:
     expect(page.locator('#tab-login')).to_be_disabled()
     expect(page.locator('#tab-register')).to_be_disabled()
     expect(page.locator('#auth-submit-btn')).to_have_text('Подождите…')
+    expect(page.locator('#auth-form')).to_have_attribute('aria-busy', 'true')
     pending[0].fulfill(status=401,json={'detail':'Проверьте логин и пароль'})
     expect(page.locator('#auth-error')).to_be_focused()
     expect(page.locator('#auth-submit-btn')).to_be_enabled()
+    expect(page.locator('#auth-form')).not_to_have_attribute('aria-busy', 'true')
     expect(page.locator('#auth-email')).to_have_value('user@example.com')
     print('Usability audit regression checks passed')
-    context.close();browser.close()
+    context.close()
+
+    # Browser locale applies until a visitor explicitly chooses a language.
+    with browser.new_context(locale='en-GB') as context:
+        page = context.new_page()
+        page.goto(BASE)
+        expect(page.locator('html')).to_have_attribute('lang', 'en')
+        expect(page.locator('#guest-preview h1')).to_have_text('PetCare dashboard')
+        picker = page.locator('#guest-preview .language-picker select')
+        picker.select_option('ru')
+        expect(page.locator('html')).to_have_attribute('lang', 'ru')
+        page.reload()
+        expect(picker).to_have_value('ru')
+        picker.select_option('auto')
+        expect(page.locator('html')).to_have_attribute('lang', 'en')
+    browser.close()

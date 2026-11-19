@@ -4,15 +4,21 @@ from sqlalchemy import text
 
 def assert_runtime_permissions(engine):
     if engine.dialect.name == 'mysql':
+        database = engine.url.database
+        literal = database.replace('\\', '\\\\').replace('_', '\\_').replace('%', '\\%')
         with engine.connect() as connection:
-            grants = [row[0].upper() for row in connection.execute(text('SHOW GRANTS'))]
+            grants = [row[0] for row in connection.execute(text('SHOW GRANTS'))]
+            databases = {literal}
+            if database != literal and connection.scalar(text('SELECT @@partial_revokes')):
+                databases.add(database)
+        scopes = {'`' + name.replace('`', '``') + '`.*' for name in databases}
         allowed = {'SELECT','INSERT','UPDATE','DELETE','USAGE'}
         for grant in grants:
             if not grant.startswith('GRANT ') or ' ON ' not in grant or 'WITH GRANT OPTION' in grant:
                 raise RuntimeError('MySQL runtime role must have data-only privileges')
             privileges = set(item.strip() for item in grant[6:].split(' ON ',1)[0].split(','))
-            scope = grant.split(' ON ',1)[1].split(' TO ',1)[0].replace('`','')
-            if scope != engine.url.database.upper() + '.*' and not (scope == '*.*' and privileges == {'USAGE'}):
+            scope = grant.split(' ON ',1)[1].split(' TO ',1)[0]
+            if scope not in scopes and not (scope == '*.*' and privileges == {'USAGE'}):
                 raise RuntimeError('MySQL runtime grants must be limited to the application database')
             if not privileges.issubset(allowed):
                 raise RuntimeError('MySQL runtime role must have only SELECT, INSERT, UPDATE, DELETE privileges')

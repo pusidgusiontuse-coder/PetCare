@@ -37,14 +37,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except (ValueError, TypeError):
         return False
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, device: str = "Браузер") -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, device: str = "Браузер", ip_address: str | None = None, *, expected_version: int | None = None) -> str:
     claims=data.copy()
     expiry=datetime.utcnow()+(expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     sid=uuid.uuid4().hex
     with SessionLocal() as db:
         user=db.get(models.User,int(claims["sub"]))
+        if expected_version is not None and (not user or user.disabled or user.token_version != expected_version):
+            raise HTTPException(401, "Войдите снова")
         claims.update(exp=expiry,jti=sid,ver=user.token_version if user else 0)
-        db.add(models.LoginSession(id=sid,user_id=int(claims["sub"]),expires_at=expiry,device=device))
+        db.add(models.LoginSession(id=sid,user_id=int(claims["sub"]),expires_at=expiry,device=device,ip_address=ip_address))
         db.commit()
     return jwt.encode(claims,SECRET_KEY,algorithm=ALGORITHM)
 

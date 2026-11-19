@@ -113,6 +113,7 @@ def copy_snapshot(snapshot, destination):
 # Only fields introduced since the REG.RU SQLite release may be synthesized.
 LEGACY_COLUMNS = {
     'users': {
+        'admin_login': 'VARCHAR(64)',
         'disabled': 'BOOLEAN NOT NULL DEFAULT 0',
         'email_verified': 'BOOLEAN NOT NULL DEFAULT 0',
         'is_admin': 'BOOLEAN NOT NULL DEFAULT 0',
@@ -120,13 +121,14 @@ LEGACY_COLUMNS = {
         'premium_until': 'DATETIME',
         'token_version': 'INTEGER NOT NULL DEFAULT 0',
     },
+    'login_sessions': {'ip_address': 'VARCHAR(45)'},
     'pet_members': {'expires_at': 'DATETIME'},
     'match_profiles': {'photos': 'JSON'},
     'reminders': {'prescription_id': 'INTEGER REFERENCES prescriptions(id)'},
 }
 LEGACY_NEW_TABLES = {
     'admin_audit', 'delivery_receipts', 'email_challenges', 'login_sessions',
-    'notification_preferences', 'push_subscriptions', 'recovery_actions', 'request_quotas',
+    'login_guards', 'site_settings', 'notification_preferences', 'push_subscriptions', 'recovery_actions', 'request_quotas',
 }
 
 

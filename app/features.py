@@ -7,10 +7,10 @@ import re
 import secrets
 import smtplib
 import uuid
-import time
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 import models
 from database import get_db
 from settings import SECRET_KEY
+from login_guard import account_key, check_ip, finish_attempt, peer_ip, precheck, support_contact
 
 
 def send_email(address, subject, body):
@@ -53,6 +54,13 @@ def normalize_email(value):
     return value
 
 
+def public_email(value):
+    email = normalize_email(value)
+    if email == "admin@petcare.local":
+        raise ValueError("Этот адрес зарезервирован")
+    return email
+
+
 def password_ok(value):
     try: length = len(value.encode('utf8'))
     except UnicodeError: raise HTTPException(422, 'Пароль содержит недопустимые символы') from None
@@ -82,7 +90,7 @@ class Registration(BaseModel):
     timezone: str = 'Europe/Moscow'
     @field_validator('email')
     @classmethod
-    def valid_email(cls, value): return normalize_email(value)
+    def valid_email(cls, value): return public_email(value)
 
 class LoginInput(BaseModel):
     email: str = Field(min_length=1, max_length=254)
@@ -93,6 +101,7 @@ class ProfileChange(BaseModel):
     email: str | None = None
     password: str | None = None
     timezone: str | None = None
+    theme: Literal['olive-honey', 'clay-milk', 'night-forest', 'forest-linen', 'mandarin', 'night-ocean'] | None = None
 
 class MemberChange(BaseModel):
     email: str
@@ -130,7 +139,7 @@ def enforce_quota(db, key, limit):
     if result.rowcount != 1: raise HTTPException(429, 'Лимит попыток исчерпан. Попробуйте позже.')
 
 
-def issue_code(db, email, purpose, user_id=None, payload=None):
+def issue_code(db, email, purpose, user_id=None, payload=None, *, language="ru"):
     now = datetime.utcnow()
     recent = db.query(models.EmailChallenge).filter(models.EmailChallenge.email == email, models.EmailChallenge.created_at > now-timedelta(seconds=60)).first()
     if recent: raise HTTPException(429, 'Повторный код можно запросить через минуту.')
@@ -138,7 +147,11 @@ def issue_code(db, email, purpose, user_id=None, payload=None):
     code, cid = f'{secrets.randbelow(1000000):06d}', secrets.token_urlsafe(24)
     item = models.EmailChallenge(id=cid, email=email, purpose=purpose, user_id=user_id, code_hash=digest(cid, code), payload=json.dumps(payload or {}), expires_at=now+timedelta(minutes=10))
     # Send before recording success. Never expose codes or passwords in logs/responses.
-    send_email(email, 'Код подтверждения PetCare', f'Ваш код PetCare: {code}\nДействует 10 минут. Если вы не запрашивали код, проигнорируйте письмо.')
+    if language == 'en':
+        send_email(email, 'Your PetCare verification code',
+                   f'Your PetCare code is {code}.\nIt expires in 10 minutes. If you did not request a code, you can ignore this email.')
+    else:
+        send_email(email, 'Код подтверждения PetCare', f'Ваш код PetCare: {code}\nДействует 10 минут. Если вы не запрашивали код, проигнорируйте письмо.')
     db.query(models.EmailChallenge).filter(models.EmailChallenge.email == email, models.EmailChallenge.purpose == purpose).update({'consumed': True})
     db.add(item); db.commit()
     return {'verification_required': True, 'challenge_id': cid, 'expires_in': 600, 'message': 'Если адрес зарегистрирован, письмо с кодом отправлено.'}
@@ -159,6 +172,26 @@ def consume_code(db, data):
     return item
 
 
+def delete_account_data(db, u):
+    owned_pets = db.query(models.Pet).filter(models.Pet.owner_id==u.id).all()
+    pet_ids = [p.id for p in owned_pets]
+    profile_ids = [p.id for p in db.query(models.MatchProfile).filter(or_(
+        models.MatchProfile.owner_id==u.id, models.MatchProfile.pet_id.in_(pet_ids)
+    )).all()]
+    db.query(models.MatchDecision).filter(or_(
+        models.MatchDecision.from_pet_id.in_(pet_ids),
+        models.MatchDecision.to_pet_id.in_(pet_ids),
+        models.MatchDecision.to_profile_id.in_(profile_ids),
+    )).delete(synchronize_session=False)
+    db.query(models.MatchProfile).filter(models.MatchProfile.id.in_(profile_ids)).delete(synchronize_session=False)
+    for p in owned_pets:
+        db.delete(p)
+    db.query(models.PetMember).filter(models.PetMember.user_id==u.id).delete()
+    for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction):
+        db.query(cls).filter(cls.user_id==u.id).delete(synchronize_session=False)
+    db.delete(u)
+
+
 def premium(u):
     return bool(u.premium_permanent or (u.premium_until and u.premium_until > datetime.utcnow()))
 
@@ -169,7 +202,7 @@ def enforce_pet_limit(db, user):
     if own+shared>=3: raise HTTPException(403,'В бесплатной версии можно добавить до трёх питомцев. Для большего количества нужен платный доступ.')
 
 def user_json(u):
-    return dict(id=u.id, full_name=u.full_name, email=u.email, timezone=u.timezone, email_verified=u.email_verified, is_admin=u.is_admin, disabled=u.disabled, premium=premium(u), premium_until=u.premium_until.isoformat() if u.premium_until else None)
+    return dict(id=u.id, full_name=u.full_name, email=u.email, timezone=u.timezone, theme=u.theme, email_verified=u.email_verified, is_admin=u.is_admin, disabled=u.disabled, premium=premium(u), premium_until=u.premium_until.isoformat() if u.premium_until else None)
 
 
 def reminder_transition(db, reminder, previous):
@@ -199,29 +232,51 @@ def install_features(app):
 
     @router.post('/auth/register')
     def register(data: Registration, request: Request, db=Depends(get_db)):
+        check_ip(db, peer_ip(request))
         password_ok(data.password)
         enforce_quota(db, 'register:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 20)
         if db.query(models.User).filter(models.User.email==data.email).first(): raise HTTPException(400,'Этот адрес уже зарегистрирован. Войдите или восстановите пароль.')
-        return issue_code(db, data.email, 'register', payload={'full_name':data.full_name, 'hashed_password':get_password_hash(data.password), 'timezone':data.timezone})
+        return issue_code(db, data.email, 'register', language=request.headers.get('X-PetCare-Language'), payload={'full_name':data.full_name, 'hashed_password':get_password_hash(data.password), 'timezone':data.timezone})
+
+    @router.get('/auth/support')
+    def auth_support(db=Depends(get_db)):
+        return {'support_contact': support_contact(db)}
 
     @router.post('/auth/login')
     def login(data: LoginInput, request: Request, db=Depends(get_db)):
-        values = data.model_dump()
-        enforce_quota(db, 'login:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'), 60)
-        login = str(values.get('email', '')).strip()
-        admin_login = os.getenv('ADMIN_LOGIN', '').strip().lower()
-        try: email=normalize_email('admin@petcare.local' if admin_login and login.lower() == admin_login else login)
-        except ValueError: raise HTTPException(401,'Неверная почта или пароль')
-        account_key = hmac.new(SECRET_KEY.encode(), email.encode(), hashlib.sha256).hexdigest()
-        window = str(int(time.time()) // 900)
-        enforce_quota(db, 'login-account:'+account_key+':'+window, 10)
-        u=db.query(models.User).filter(models.User.email==email).first()
-        # Equal-cost password check for unknown users, without account-specific errors.
         from auth import DUMMY_PASSWORD_HASH
-        password_valid = verify_password(values['password'], u.hashed_password if u else DUMMY_PASSWORD_HASH)
-        if not u or u.disabled or (email in ('demo1@petcare.app','demo2@petcare.app','demo1@petcare.local','demo2@petcare.local')) or not password_valid:
-            raise HTTPException(401,'Неверная почта или пароль')
-        return {'access_token':create_access_token({'sub':str(u.id)}, device=request.headers.get('user-agent','Браузер')[:200]),'token_type':'bearer','user':user_json(u)}
+        identity = data.email.strip().lower()
+        ip = peer_ip(request)
+        user = None
+        if '@' in identity:
+            try:
+                email = normalize_email(identity)
+            except ValueError:
+                email = None
+            if email:
+                user = db.query(models.User).filter(models.User.email == email).first()
+        else:
+            user = db.query(models.User).filter(models.User.admin_login == identity, models.User.is_admin.is_(True)).first()
+            if not user and identity == os.getenv('ADMIN_LOGIN', 'petcare-admin').strip().lower():
+                user = db.query(models.User).filter(models.User.email == 'admin@petcare.local', models.User.is_admin.is_(True)).first()
+        key = account_key(f'user:{user.id}' if user else f'unknown:{identity}')
+        precheck(db, ip, key)
+        if ip:
+            enforce_quota(db, 'login:' + ip + ':' + datetime.utcnow().strftime('%Y%m%d%H'), 60)
+        password_valid = verify_password(data.password, user.hashed_password if user else DUMMY_PASSWORD_HASH)
+        allowed = bool(user and not user.disabled and user.email not in {
+            'demo1@petcare.app', 'demo2@petcare.app', 'demo1@petcare.local', 'demo2@petcare.local',
+        } and password_valid)
+        uid, version = (user.id, user.token_version) if allowed else (None, None)
+        finish_attempt(db, ip, key, failed=not password_valid or user is None, reset=allowed)
+        if not allowed:
+            raise HTTPException(401, 'Неверная почта, логин или пароль')
+        current = db.get(models.User, uid)
+        ttl = timedelta(hours=8) if current.is_admin else None
+        token = create_access_token({'sub': str(uid)}, expires_delta=ttl,
+                                    device=request.headers.get('user-agent', 'Браузер')[:200],
+                                    ip_address=ip, expected_version=version)
+        return {'access_token': token, 'token_type': 'bearer', 'user': user_json(current)}
 
     @router.get('/auth/session')
     @router.get('/auth/me')
@@ -229,27 +284,31 @@ def install_features(app):
 
     @router.post('/auth/codes')
     def code(data: CodeRequest, request: Request, db=Depends(get_db)):
+        check_ip(db, peer_ip(request))
         enforce_quota(db,'codes-ip:'+str(request.client.host if request.client else '')+':'+datetime.utcnow().strftime('%Y%m%d%H'),30)
         if data.purpose != 'password_reset': raise HTTPException(400,'Недопустимая операция')
         u=db.query(models.User).filter(models.User.email==data.email).first()
         if not u: return {'verification_required':True,'challenge_id':secrets.token_urlsafe(24),'expires_in':600,'message':'Если адрес зарегистрирован, письмо с кодом отправлено.'}
-        return issue_code(db,u.email,'password_reset',u.id)
+        return issue_code(db,u.email,'password_reset',u.id,language=request.headers.get('X-PetCare-Language'))
 
     @router.post('/auth/account-codes')
-    def account_code(data: CodeRequest, u=Depends(get_current_user), db=Depends(get_db)):
-        if data.purpose=='verify_email': return issue_code(db,u.email,'verify_email',u.id)
+    def account_code(data: CodeRequest, request: Request, u=Depends(get_current_user), db=Depends(get_db)):
+        if data.purpose=='verify_email': return issue_code(db,u.email,'verify_email',u.id,language=request.headers.get('X-PetCare-Language'))
+        if data.purpose == 'delete_account' and u.is_admin:
+            raise HTTPException(400, 'Перед удалением снимите роль администратора')
         if data.purpose not in ('password_change','email_change','delete_account'): raise HTTPException(400,'Недопустимая операция')
         if not verify_password(data.current_password or '',u.hashed_password): raise HTTPException(403,'Неверный текущий пароль')
         email=u.email; payload={}
         if data.purpose=='email_change':
-            try: email=normalize_email(data.new_email or '')
+            try: email=public_email(data.new_email or '')
             except ValueError: raise HTTPException(422,'Неверная новая почта')
             if db.query(models.User).filter(models.User.email==email).first(): raise HTTPException(409,'Этот адрес уже занят')
             payload={'old_email':u.email}
-        return issue_code(db,email,data.purpose,u.id,payload)
+        return issue_code(db,email,data.purpose,u.id,payload,language=request.headers.get('X-PetCare-Language'))
 
     @router.post('/auth/confirm')
-    def confirm(data: CodeConfirm, db=Depends(get_db)):
+    def confirm(data: CodeConfirm, request: Request, db=Depends(get_db)):
+        check_ip(db, peer_ip(request))
         item=db.get(models.EmailChallenge,data.challenge_id)
         if item and item.purpose in ('password_change','password_reset'): password_ok(data.new_password or '')
         item=consume_code(db,data); payload=json.loads(item.payload)
@@ -267,37 +326,27 @@ def install_features(app):
             if db.query(models.User).filter(models.User.email==item.email,models.User.id!=u.id).first(): raise HTTPException(409,'Адрес уже занят')
             # Notification to the old address is required before completing the change.
             if not payload['old_email'].endswith('.local'): send_email(payload['old_email'],'Почта PetCare изменена','Для вашего аккаунта подтверждена новая электронная почта. Если это были не вы, обратитесь в поддержку.')
+            if u.is_admin and not u.admin_login and u.email == 'admin@petcare.local':
+                u.admin_login = os.getenv('ADMIN_LOGIN', 'petcare-admin').strip().lower()
             u.email=item.email; u.email_verified=True; u.token_version+=1
             db.query(models.LoginSession).filter(models.LoginSession.user_id==u.id).update({'revoked':True})
         elif item.purpose=='delete_account':
-            owned_pets = db.query(models.Pet).filter(models.Pet.owner_id==u.id).all()
-            pet_ids = [p.id for p in owned_pets]
-            profile_ids = [p.id for p in db.query(models.MatchProfile).filter(or_(
-                models.MatchProfile.owner_id==u.id, models.MatchProfile.pet_id.in_(pet_ids)
-            )).all()]
-            db.query(models.MatchDecision).filter(or_(
-                models.MatchDecision.from_pet_id.in_(pet_ids),
-                models.MatchDecision.to_pet_id.in_(pet_ids),
-                models.MatchDecision.to_profile_id.in_(profile_ids),
-            )).delete(synchronize_session=False)
-            db.query(models.MatchProfile).filter(models.MatchProfile.id.in_(profile_ids)).delete(synchronize_session=False)
-            for p in owned_pets:
-                db.delete(p)
-            db.query(models.PetMember).filter(models.PetMember.user_id==u.id).delete()
-            for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction):
-                db.query(cls).filter(cls.user_id==u.id).delete(synchronize_session=False)
-            db.delete(u); db.commit(); return {'deleted':True}
+            if u.is_admin: raise HTTPException(400, 'Перед удалением снимите роль администратора')
+            delete_account_data(db, u)
+            db.commit()
+            return {'deleted': True}
         elif item.purpose=='verify_email': u.email_verified=True
         if item.purpose in ('password_reset','password_change','email_change'):
             db.query(models.EmailChallenge).filter(models.EmailChallenge.user_id==u.id).update({'consumed':True})
         db.commit(); db.refresh(u)
-        return {'access_token':create_access_token({'sub':str(u.id)}),'token_type':'bearer','user':user_json(u)}
+        return {'access_token':create_access_token({'sub':str(u.id)}, expires_delta=timedelta(hours=8) if u.is_admin else None, device=request.headers.get('user-agent', 'Браузер')[:200], ip_address=peer_ip(request)),'token_type':'bearer','user':user_json(u)}
 
     @router.put('/auth/user')
     @router.patch('/auth/profile')
     def profile(data: ProfileChange,u=Depends(get_current_user),db=Depends(get_db)):
         if data.password or (data.email and data.email.strip().lower()!=u.email): raise HTTPException(400,'Для смены пароля или почты нужен код подтверждения')
         if data.full_name is not None: u.full_name=data.full_name
+        if data.theme is not None: u.theme = data.theme
         if data.timezone:
             try: ZoneInfo(data.timezone)
             except Exception: raise HTTPException(422,'Неверный часовой пояс')
@@ -426,53 +475,6 @@ def install_features(app):
     def billing(u=Depends(get_current_user)):
         return {'premium':premium(u),'pet_limit':None if premium(u) else 3,'is_admin':u.is_admin,'premium_until':u.premium_until}
 
-    @router.get('/admin/users')
-    def users(offset:int=0,search:str='',u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        query=db.query(models.User)
-        if search: query=query.filter(or_(models.User.email.contains(search[:100],autoescape=True),models.User.full_name.contains(search[:100],autoescape=True)))
-        return {'users':[{**user_json(x),'pet_count':len(x.pets)} for x in query.order_by(models.User.id).offset(max(0,offset)).limit(100).all()],'total':query.count()}
-
-    @router.patch('/admin/users/{user_id}/premium')
-    def set_premium(user_id:int,data:dict,u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        target=db.get(models.User,user_id)
-        if not target: raise HTTPException(404,'Пользователь не найден')
-        enabled=data.get('enabled')
-        if not isinstance(enabled,bool): raise HTTPException(422,'Укажите enabled: true/false')
-        days=data.get('days')
-        if days is not None and (not isinstance(days,int) or days<1 or days>3650): raise HTTPException(422,'Срок: от 1 до 3650 дней')
-        target.premium_permanent=enabled and days is None; target.premium_until=datetime.utcnow()+timedelta(days=days) if enabled and days else None
-        db.add(models.AdminAudit(actor_id=u.id,target_id=target.id,action='premium:'+str(enabled)+':days='+str(days))); db.commit(); return user_json(target)
-
-    @router.get('/admin/status')
-    def admin_status(u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        return {'users':db.query(models.User).count(),'pets':db.query(models.Pet).count(),'documents':db.query(models.Document).count(),'smtp_configured':bool(os.getenv('SMTP_HOST') and os.getenv('SMTP_FROM')),'ocr_configured':(Path(__file__).parent/'static/ocr/vendor/rus.traineddata.gz').is_file(),'push_configured':bool(os.getenv('VAPID_PRIVATE_KEY'))}
-
-    @router.get('/admin/audit')
-    def audit(u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        return [dict(actor_id=r.actor_id,target_id=r.target_id,action=r.action,at=r.at) for r in db.query(models.AdminAudit).order_by(models.AdminAudit.id.desc()).limit(100).all()]
-
-    @router.post('/admin/users/{user_id}/revoke-sessions')
-    def admin_revoke(user_id:int,u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        target=db.get(models.User,user_id)
-        if not target: raise HTTPException(404,'Пользователь не найден')
-        target.token_version+=1; db.query(models.LoginSession).filter(models.LoginSession.user_id==user_id).update({'revoked':True})
-        db.add(models.AdminAudit(actor_id=u.id,target_id=user_id,action='revoke_sessions')); db.commit(); return {'status':'ok'}
-
-    @router.patch('/admin/users/{user_id}/blocked')
-    def block(user_id:int,data:dict,u=Depends(get_current_user),db=Depends(get_db)):
-        if not u.is_admin: raise HTTPException(403,'Доступ только для администратора')
-        target=db.get(models.User,user_id)
-        if not target: raise HTTPException(404,'Пользователь не найден')
-        if target.is_admin: raise HTTPException(400,'Нельзя блокировать администратора')
-        if not isinstance(data.get('blocked'),bool): raise HTTPException(422,'Укажите blocked')
-        target.disabled=data['blocked']; target.token_version+=1
-        db.add(models.AdminAudit(actor_id=u.id,target_id=user_id,action='blocked:'+str(target.disabled))); db.commit(); return user_json(target)
-
     @router.get('/account/export')
     def export(u=Depends(get_current_user),db=Depends(get_db)):
         from fastapi.encoders import jsonable_encoder
@@ -488,8 +490,22 @@ def install_features(app):
     app.include_router(router)
     static=Path(__file__).parent/'static'
     @app.get('/manifest.webmanifest',include_in_schema=False)
-    def manifest(): return FileResponse(static/'manifest.webmanifest',media_type='application/manifest+json')
+    def manifest(lang: Literal['ru', 'en'] = 'ru'):
+        name = 'manifest.en.webmanifest' if lang == 'en' else 'manifest.webmanifest'
+        return FileResponse(static/name, media_type='application/manifest+json')
     @app.get('/sw.js',include_in_schema=False)
     def service_worker(): return FileResponse(static/'sw.js',media_type='text/javascript',headers={'Cache-Control':'no-cache','Service-Worker-Allowed':'/'})
     from fastapi.staticfiles import StaticFiles
     app.mount('/static',StaticFiles(directory=static),name='static')
+
+    @app.get('/admin', include_in_schema=False)
+    def admin_shell():
+        index_path = static / 'frontend' / 'index.html'
+        if not index_path.is_file():
+            raise HTTPException(503, 'Frontend build missing.')
+        return FileResponse(index_path)
+
+    from admin import install_admin
+    from billing import install_billing
+    install_admin(app)
+    install_billing(app)
