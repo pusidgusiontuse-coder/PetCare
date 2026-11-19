@@ -85,7 +85,7 @@ with sync_playwright() as p:
             rect=button.bounding_box()
             assert abs(rect['x']+rect['width']/2-width/2)<2, rect
             assert rect['width'] >= 44 and rect['height'] >= 44, rect
-            circle=button.locator('svg').bounding_box()
+            circle=button.locator('svg:not(.guest-lock-icon)').bounding_box()
             assert abs(circle['height']-circle['width'])<1, circle
             assert page.locator('.nav a:visible').count()==5
             page.screenshot(path=f'/tmp/petcare-nav-{width}.png')

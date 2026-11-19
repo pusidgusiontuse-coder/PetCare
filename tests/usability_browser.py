@@ -32,14 +32,15 @@ with sync_playwright() as p:
         pets_link.hover()
         expect(pets_link).to_have_css('background-color','rgba(0, 0, 0, 0)')
         colors = page.evaluate('''() => {
-            const label = document.createElement('span');
-            document.body.append(label);
-            label.style.color = 'var(--accent-dark)';
-            const text = getComputedStyle(label).color;
-            label.style.color = 'var(--on-accent)';
-            const icon = getComputedStyle(label).color;
-            label.remove();
-            return {text, icon};
+            const resolve = variable => {
+                const probe = document.createElement('span');
+                probe.style.cssText = 'transition:none;color:var(' + variable + ')';
+                document.body.append(probe);
+                const color = getComputedStyle(probe).color;
+                probe.remove();
+                return color;
+            };
+            return {text:resolve('--accent-dark'), icon:resolve('--surface')};
         }''')
         expect(pets_link.locator('.nav-label')).to_have_css('color',colors['text'])
         expect(pets_link.locator('svg:not(.guest-lock-icon)')).to_have_css('color',colors['icon'])
