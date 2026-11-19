@@ -96,9 +96,10 @@ def test_foreign_feeding_reference_is_rejected(client):
 
 def test_account_throttle_cannot_be_bypassed_by_changing_ip(client):
     account=user()
-    for _ in range(10):
+    for attempt in range(1, 6):
         r=client.post('/api/v1/auth/login',json={'email':account[1],'password':'wrong-password'})
-        assert r.status_code==401
+        assert r.status_code == (429 if attempt == 5 else 401)
+    assert r.headers['Retry-After'] == '30'
     other=TestClient(main.app,client=('203.0.113.99',50000))
     r=other.post('/api/v1/auth/login',headers={'X-Forwarded-For':'192.0.2.100'},json={'email':account[1].upper(),'password':'test-password'})
     assert r.status_code==429

@@ -1,0 +1,112 @@
+:root, [data-petcare-theme="olive-honey"] {
+  --bg: #f6f2de;
+  --surface: #fffced;
+  --cover: #ede1a8;
+  --accent: #4b551d;
+  --ink: #343820;
+  --muted: #595740;
+  --line: #d9d1af;
+  --warning: #88520f;
+  --on-accent: #fff;
+  --brand-color: #4b551d;
+  --danger: #933644;
+  --danger-bg: #fff1f2;
+  color-scheme: light;
+}
+
+[data-petcare-theme="clay-milk"] {
+  --bg: #f9efe7;
+  --surface: #fffaf5;
+  --cover: #f1d8c9;
+  --accent: #983f2d;
+  --ink: #422b28;
+  --muted: #684d45;
+  --line: #dfc5b8;
+  --warning: #8c4b12;
+  --brand-color: #983f2d;
+}
+
+[data-petcare-theme="night-forest"] {
+  --bg: #15241f;
+  --surface: #1d3029;
+  --cover: #28463a;
+  --accent: #a7ddbe;
+  --ink: #eff7f0;
+  --muted: #b7cdc0;
+  --line: #405c4d;
+  --warning: #f2bd76;
+  --on-accent: #132b20;
+  --brand-color: #315a47;
+  --danger: #ffb3bd;
+  --danger-bg: #472c34;
+  color-scheme: dark;
+}
+
+[data-petcare-theme="forest-linen"] {
+  --bg: #f5f2e9;
+  --surface: #fffcf6;
+  --cover: #dce9da;
+  --accent: #28543f;
+  --ink: #1c372c;
+  --muted: #4d6459;
+  --line: #ced9ca;
+  --warning: #93600f;
+  --brand-color: #28543f;
+}
+
+[data-petcare-theme="mandarin"] {
+  --bg: #fff3e5;
+  --surface: #fffcf7;
+  --cover: #ffd9ab;
+  --accent: #a94204;
+  --ink: #522d19;
+  --muted: #68482e;
+  --line: #ebcba8;
+  --warning: #8a4e07;
+  --brand-color: #c9510b;
+}
+
+[data-petcare-theme="night-ocean"] {
+  --bg: #161e2c;
+  --surface: #202d41;
+  --cover: #2b4163;
+  --accent: #a6c6ff;
+  --ink: #f0f5ff;
+  --muted: #bdcce7;
+  --line: #4d6080;
+  --warning: #ffd08a;
+  --on-accent: #112745;
+  --brand-color: #28549b;
+  --danger: #ffbac7;
+  --danger-bg: #493447;
+  color-scheme: dark;
+}
+
+[data-petcare-theme="clay-milk"], [data-petcare-theme="forest-linen"], [data-petcare-theme="mandarin"] {
+  --on-accent: #fff;
+  --danger: #933644;
+  --danger-bg: #fff1f2;
+  color-scheme: light;
+}
+
+:root, [data-petcare-theme] {
+  --soft: color-mix(in srgb, var(--cover) 62%, var(--surface));
+  --profile-shell: color-mix(in srgb, var(--cover) 42%, var(--surface));
+  --accent-dark: color-mix(in srgb, var(--accent) 83%, var(--ink));
+  --warning-bg: color-mix(in srgb, var(--warning) 13%, var(--surface));
+}
+
+.brand-mark {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+:is(.sidebar .brand-mark, .auth-logo .brand-mark, .theme-thumb .brand-mark) { background: var(--brand-color); }
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url('./petcare-mark.png') center / cover no-repeat;
+  filter: grayscale(1) brightness(.81) contrast(2.45);
+  mix-blend-mode: screen;
+}

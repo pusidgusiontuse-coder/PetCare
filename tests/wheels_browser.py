@@ -7,7 +7,7 @@ BASE=os.environ.get('PETCARE_TEST_URL','http://127.0.0.1:8002')
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     for width,height in ((1440,900),(375,812),(812,375)):
-        context=browser.new_context(viewport={'width':width,'height':height},has_touch=True,is_mobile=width < 1024,reduced_motion='reduce')
+        context=browser.new_context(locale='ru-RU', viewport={'width':width,'height':height},has_touch=True,is_mobile=width < 1024,reduced_motion='reduce')
         result=context.request.post(BASE+'/api/v1/auth/demo-login/1');assert result.ok
         context.add_init_script("window.__PETCARE_TEST__=true;")
         context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(result.json()['access_token'])+')')

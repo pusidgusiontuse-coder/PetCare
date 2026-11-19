@@ -1,6 +1,8 @@
+import { uiText } from './i18n';
 import { Icons } from './components/Icons';
 import { Sidebar } from './components/Sidebar';
 import { AppHeader } from './components/AppHeader';
+import { GuestPreview } from './components/GuestPreview';
 import { Dialogs } from './components/Dialogs';
 import { PetsPage } from './pages/PetsPage';
 import { HealthPage } from './pages/HealthPage';
@@ -14,11 +16,12 @@ import { ProfilePage } from './pages/ProfilePage';
 export function App() {
   return <>
     <Icons />
-    <div className="app">
-      <a className="skip-link" href="#main-content">К содержимому</a>
+    <div className="app" id="petcare-shell" data-session-view="loading" inert>
+      <a className="skip-link" href="#main-content">{uiText("К содержимому")}</a>
       <Sidebar />
       <main className="content" id="main-content" tabIndex={-1}>
         <AppHeader />
+        <GuestPreview />
         <PetsPage />
         <HealthPage />
         <NutritionPage />
@@ -28,6 +31,11 @@ export function App() {
       </main>
     </div>
     <Dialogs />
+    <div id="connection-status" className="connection-status" role="status" hidden>
+      <span className="connection-spinner" aria-hidden="true" />
+      <span id="connection-message">{uiText("Загружаем данные…")}</span>
+      <button id="connection-retry" type="button" hidden>{uiText("Повторить")}</button>
+    </div>
     <div id="push-banner-stack" className="push-banner-stack" aria-live="assertive" />
     <div id="toast" className="toast" role="status" aria-live="polite" />
   </>;

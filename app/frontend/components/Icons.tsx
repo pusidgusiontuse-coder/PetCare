@@ -15,6 +15,12 @@ export function Icons() {
           <symbol id="heart" viewBox="0 0 24 24">
             <path d="M20 5c-3-3-6-1-8 1-2-2-5-4-8-1-5 5 3 12 8 15 5-3 13-10 8-15Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
           </symbol>
+          <symbol id="lock" viewBox="0 0 24 24">
+            <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="10" width="14" height="11" rx="2" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2" />
+            </g>
+          </symbol>
           <symbol id="spark" viewBox="0 0 24 24">
             <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M16.5 4.5c-1.8 0-3.3.9-4.5 2.3-1.2-1.4-2.7-2.3-4.5-2.3C4.4 4.5 2 7 2 10.2c0 4.4 5.6 8.3 10 11.3 4.4-3 10-6.9 10-11.3 0-3.2-2.4-5.7-5.5-5.7Z" />

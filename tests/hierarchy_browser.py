@@ -7,7 +7,7 @@ BASE=os.environ.get('PETCARE_TEST_URL','http://127.0.0.1:8002')
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     for width,height in ((1440,900),(375,812),(812,375)):
-        context=browser.new_context(viewport={'width':width,'height':height},reduced_motion='reduce')
+        context=browser.new_context(locale='ru-RU', viewport={'width':width,'height':height},reduced_motion='reduce')
         r=context.request.post(BASE+'/api/v1/auth/demo-login/1');assert r.ok
         token=r.json()['access_token']
         context.add_init_script("window.__PETCARE_TEST__=true;")
@@ -29,21 +29,22 @@ with sync_playwright() as p:
         page.locator('#close-editor').click()
         page.screenshot(path=f'/tmp/petcare-simpler-care-{width}.png',full_page=True)
         page.evaluate("show('profile')")
-        expect(page.locator('#profile .settings-group')).to_have_count(5)
-        assert page.locator('#profile button:visible').count()==0
+        expect(page.locator('#profile .settings-group')).to_have_count(4)
+        expect(page.locator('#profile #btn-account-settings')).to_be_visible()
+        expect(page.locator('#profile #install-petcare')).to_be_visible()
         expect(page.locator('#profile #avatar-preview')).to_have_count(0)
         page.screenshot(path=f'/tmp/petcare-simpler-profile-{width}.png',full_page=True)
-        for group,control in [('person','#btn-account-settings'),('notifications','#enable-alerts'),('sharing','[data-extra-modal=member]'),('security','[data-security=password_change]'),('app','#install-petcare')]:
+        for group,control in [('notifications','#enable-alerts'),('sharing','[data-extra-modal=member]'),('security','[data-security=password_change]'),('data','#export-account')]:
             page.locator('#settings-'+group+' > summary').click()
             expect(page.locator('#settings-'+group+' '+control)).to_be_visible()
             page.locator('#settings-'+group+' > summary').click()
-        page.locator('#settings-app > summary').click()
         page.evaluate('installPrompt=null')
         page.locator('#install-petcare').click()
-        expect(page.locator('#settings-app .settings-feedback')).to_be_visible()
-        expect(page.locator('#settings-app .settings-feedback')).not_to_have_text('')
+        expect(page.locator('#install-dialog')).to_be_visible()
+        expect(page.locator('#install-steps > li')).to_have_count(3)
+        page.locator('#install-close').click()
+        expect(page.locator('#install-dialog')).to_be_hidden()
         expect(page.locator('#settings-security')).not_to_have_attribute('open','')
-        page.locator('#settings-app > summary').click()
         page.locator('#settings-notifications > summary').click()
         page.route('**/api/v1/notifications/config',lambda route:route.fulfill(json={'configured':False}))
         page.locator('#subscribe-push').click()

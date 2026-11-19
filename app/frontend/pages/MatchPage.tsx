@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { ProfileGallery } from '../components/ProfileGallery';
 
 export function MatchPage() {
@@ -6,48 +7,34 @@ export function MatchPage() {
       <section id="match" className="section">
         <div className="topline">
           <div>
-            <p className="eyebrow">
-              СООБЩЕСТВО ХВОСТАТЫХ
-            </p>
-            <h1>
-              Поиск друзей
-            </h1>
+            <p className="eyebrow">{uiText("СООБЩЕСТВО ХВОСТАТЫХ")}</p>
+            <h1>{uiText("Поиск друзей")}</h1>
             <span className="subtle" id="match-pet-subtitle" />
           </div>
-          <button className="btn primary" id="btn-open-my-match-form" type="button">
-            Анкета питомца
-          </button>
+          <button className="btn primary" id="btn-open-my-match-form" type="button">{uiText("Анкета питомца")}</button>
         </div>
         <div className="match-context-bar" id="match-context-bar" />
-        <div className="match-mode-tabs" role="tablist" aria-label="Разделы поиска друзей">
+        <div className="match-mode-tabs" role="tablist" aria-label={uiText("Разделы поиска друзей")}>
           <button type="button" className="match-mode-tab active" data-match-tab="discover" role="tab" aria-selected="true">
-            <span>
-              Анкеты питомцев
-            </span>
+            <span>{uiText("Анкеты питомцев")}</span>
             <span className="match-tab-count" id="match-discover-count">
               0
             </span>
           </button>
           <button type="button" className="match-mode-tab" data-match-tab="incoming" role="tab" aria-selected="false">
-            <span>
-              Вас лайкнули
-            </span>
+            <span>{uiText("Вас лайкнули")}</span>
             <span className="match-tab-count hot" id="match-incoming-count">
               0
             </span>
           </button>
           <button type="button" className="match-mode-tab" data-match-tab="liked" role="tab" aria-selected="false">
-            <span>
-              Друзья
-            </span>
+            <span>{uiText("Друзья")}</span>
             <span className="match-tab-count" id="match-liked-count">
               0
             </span>
           </button>
           <button type="button" className="match-mode-tab" data-match-tab="profile" role="tab" aria-selected="false">
-            <span>
-              Анкета питомца
-            </span>
+            <span>{uiText("Анкета питомца")}</span>
           </button>
         </div>
         <div id="match-pane-discover">
@@ -58,12 +45,8 @@ export function MatchPage() {
           <div className="panel glass">
             <div className="panel-head">
               <div>
-                <h2>
-                  Кому понравился ваш питомец
-                </h2>
-                <p className="small" style={{"margin": "4px 0 0"}}>
-                  Посмотрите анкету питомца, ответьте лайком или скопируйте контакты хозяина прямо из карточки
-                </p>
+                <h2>{uiText("Кому понравился ваш питомец")}</h2>
+                <p className="small" style={{"margin": "4px 0 0"}}>{uiText("Посмотрите анкету питомца, ответьте лайком или скопируйте контакты хозяина прямо из карточки")}</p>
               </div>
             </div>
             <div id="match-incoming-list" className="match-cards-grid" />
@@ -73,12 +56,8 @@ export function MatchPage() {
           <div className="panel glass">
             <div className="panel-head">
               <div>
-                <h2>
-                  Друзья
-                </h2>
-                <p className="small" style={{"margin": "4px 0 0"}}>
-                  Питомцы, которых вы отметили лайком, и контакты их хозяев
-                </p>
+                <h2>{uiText("Друзья")}</h2>
+                <p className="small" style={{"margin": "4px 0 0"}}>{uiText("Питомцы, которых вы отметили лайком, и контакты их хозяев")}</p>
               </div>
             </div>
             <div id="match-liked-list" className="match-cards-grid" />
@@ -88,111 +67,91 @@ export function MatchPage() {
           <div className="panel glass">
             <div className="panel-head">
               <div>
-                <h2 id="match-form-heading">
-                  Анкета питомца
-                </h2>
-                <p className="small" style={{"margin": "4px 0 0"}}>
-                  Заполните анкету для активного питомца, чтобы другие владельцы могли найти вас
-                </p>
+                <h2 id="match-form-heading">{uiText("Анкета питомца")}</h2>
+                <p className="small" style={{"margin": "4px 0 0"}}>{uiText("Заполните анкету для активного питомца, чтобы другие владельцы могли найти вас")}</p>
               </div>
             </div>
             <form id="match-profile-form" className="form-grid">
               <label className="field">
-                {"Имя питомца\n              "}
-                <input name="name" type="text" required placeholder="Например: Барсик" />
+                {(uiText("Имя питомца")+"\n              ")}
+                <input name="name" type="text" required placeholder={uiText("Например: Барсик")} />
               </label>
               <label className="field">
-                {"Вид животного\n              "}
-                <input name="species" type="text" required placeholder="Кот, Кошка, Собака…" />
+                {(uiText("Вид животного")+"\n              ")}
+                <input name="species" type="text" required placeholder={uiText("Кот, Кошка, Собака…")} />
               </label>
               <label className="field">
-                {"Порода\n              "}
-                <input name="breed" type="text" required placeholder="Британская короткошёрстная, Овчарка…" />
+                {(uiText("Порода")+"\n              ")}
+                <input name="breed" type="text" required placeholder={uiText("Британская короткошёрстная, Овчарка…")} />
               </label>
               <label className="field">
-                {"Дата рождения\n              "}
+                {(uiText("Дата рождения")+"\n              ")}
                 <input name="birth_date" type="date" />
               </label>
               <label className="field">
-                {"Пол\n              "}
+                {(uiText("Пол")+"\n              ")}
                 <select name="sex">
-                  <option value="Неизвестно">
-                    Не указано
-                  </option>
-                  <option value="Самец">
-                    Самец
-                  </option>
-                  <option value="Самка">
-                    Самка
-                  </option>
+                  <option value="Неизвестно">{uiText("Не указано")}</option>
+                  <option value="Самец">{uiText("Самец")}</option>
+                  <option value="Самка">{uiText("Самка")}</option>
                 </select>
               </label>
               <label className="field">
-                {"Прививки\n              "}
+                {(uiText("Прививки")+"\n              ")}
                 <select name="vaccinated">
-                  <option value="Не указано">
-                    Не указано
-                  </option>
-                  <option value="Да, все по возрасту">
-                    Да, все по возрасту
-                  </option>
-                  <option value="Частично (по графику)">
-                    Частично (по графику)
-                  </option>
-                  <option value="Нет прививок">
-                    Нет прививок
-                  </option>
+                  <option value="Не указано">{uiText("Не указано")}</option>
+                  <option value="Да, все по возрасту">{uiText("Да, все по возрасту")}</option>
+                  <option value="Частично (по графику)">{uiText("Частично (по графику)")}</option>
+                  <option value="Нет прививок">{uiText("Нет прививок")}</option>
                 </select>
               </label>
-              <fieldset className="purpose-field sterilization-field full"><legend>Стерилизация / кастрация</legend><div className="purpose-options binary-options">
-                <label className="purpose-option"><input type="radio" name="sterilized" value="Да" /><span><strong>Да</strong><small>Проведена</small></span><span className="purpose-check" aria-hidden="true" /></label>
-                <label className="purpose-option"><input type="radio" name="sterilized" value="Нет" defaultChecked /><span><strong>Нет</strong><small>Не проводилась</small></span><span className="purpose-check" aria-hidden="true" /></label>
+              <fieldset className="purpose-field sterilization-field full"><legend>{uiText("Стерилизация / кастрация")}</legend><div className="purpose-options binary-options">
+                <label className="purpose-option"><input type="radio" name="sterilized" value="Да" /><span><strong>{uiText("Да")}</strong><small>{uiText("Проведена")}</small></span><span className="purpose-check" aria-hidden="true" /></label>
+                <label className="purpose-option"><input type="radio" name="sterilized" value="Нет" defaultChecked /><span><strong>{uiText("Нет")}</strong><small>{uiText("Не проводилась")}</small></span><span className="purpose-check" aria-hidden="true" /></label>
               </div></fieldset>
               <fieldset className="purpose-field full">
-                <legend>Кого ищем?</legend>
-                <p>Выберите главную цель знакомства</p>
+                <legend>{uiText("Кого ищем?")}</legend>
+                <p>{uiText("Выберите главную цель знакомства")}</p>
                 <div className="purpose-options">
                   <label className="purpose-option">
                     <input type="radio" name="purpose" value="Совместные прогулки и игры" defaultChecked />
                     <span className="purpose-icon" aria-hidden="true"><svg><use href="#paw" /></svg></span>
-                    <span><strong>Гулять и играть</strong><small>Компания для прогулок и новых открытий</small></span>
+                    <span><strong>{uiText("Гулять и играть")}</strong><small>{uiText("Компания для прогулок и новых открытий")}</small></span>
                     <span className="purpose-check" aria-hidden="true" />
                   </label>
                   <label className="purpose-option">
                     <input type="radio" name="purpose" value="Поиск компании по породе" />
                     <span className="purpose-icon" aria-hidden="true"><svg><use href="#spark" /></svg></span>
-                    <span><strong>Найти свою компанию</strong><small>Знакомства с питомцами той же породы</small></span>
+                    <span><strong>{uiText("Найти свою компанию")}</strong><small>{uiText("Знакомства с питомцами той же породы")}</small></span>
                     <span className="purpose-check" aria-hidden="true" />
                   </label>
                   <label className="purpose-option">
                     <input type="radio" name="purpose" value="Вязка / продолжение рода" />
                     <span className="purpose-icon" aria-hidden="true"><svg><use href="#heart" /></svg></span>
-                    <span><strong>Найти пару</strong><small>Партнёр для продолжения рода</small></span>
+                    <span><strong>{uiText("Найти пару")}</strong><small>{uiText("Партнёр для продолжения рода")}</small></span>
                     <span className="purpose-check" aria-hidden="true" />
                   </label>
                 </div>
               </fieldset>
               <label className="field">
-                {"Город и район\n              "}
-                <input name="city" type="text" placeholder="Например: Москва, Сокольники" />
+                {(uiText("Город и район")+"\n              ")}
+                <input name="city" type="text" placeholder={uiText("Например: Москва, Сокольники")} />
               </label>
               <label className="field">
-                {"Имя хозяина\n              "}
-                <input name="owner_name" type="text" required placeholder="Ваше имя" />
+                {(uiText("Имя хозяина")+"\n              ")}
+                <input name="owner_name" type="text" required placeholder={uiText("Ваше имя")} />
               </label>
               <label className="field full">
-                {"Контакты хозяина для связи (обязательно)\n              "}
-                <input name="owner_contact" type="text" required placeholder="Telegram: @username, телефон +7 (999) 000-00-00 или WhatsApp" />
+                {(uiText("Контакты хозяина для связи (обязательно)")+"\n              ")}
+                <input name="owner_contact" type="text" required placeholder={uiText("Telegram: @username, телефон +7 (999) 000-00-00 или WhatsApp")} />
               </label>
               <label className="field full">
-                {"О питомце (характер, привычки, кого ищете)\n              "}
-                <textarea name="bio" rows={4} placeholder="Расскажите о характере питомца и кого ищете для прогулок или общения" />
+                {(uiText("О питомце (характер, привычки, кого ищете)")+"\n              ")}
+                <textarea name="bio" rows={4} placeholder={uiText("Расскажите о характере питомца и кого ищете для прогулок или общения")} />
               </label>
               <ProfileGallery />
               <div className="form-actions full" style={{"justifyContent": "flex-start"}}>
-                <button type="submit" className="btn primary" id="btn-save-match-profile">
-                  Опубликовать анкету
-                </button>
+                <button type="submit" className="btn primary" id="btn-save-match-profile">{uiText("Опубликовать анкету")}</button>
                 <span id="match-profile-feedback" className="small" role="status" aria-live="polite" />
               </div>
             </form>

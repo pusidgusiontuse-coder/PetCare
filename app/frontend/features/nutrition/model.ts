@@ -1,12 +1,13 @@
+import { formatLocale, uiText } from '../../i18n';
 import type { FoodEntry, FoodKind, Rating } from './types';
 
 export const kindLabels: Record<FoodKind, string> = {
-  food: 'Корм', treat: 'Лакомство', supplement: 'Добавка',
+  food: uiText("Корм"), treat: uiText("Лакомство"), supplement: uiText("Добавка"),
 };
-export const ratingLabel = (value?: Rating) => value === 'yes' ? 'Да' : value === 'no' ? 'Нет' : 'Не указано';
-export const formatMoney = (value: number) => Number(value).toLocaleString('ru-RU') + ' ₽';
+export const ratingLabel = (value?: Rating) => value === 'yes' ? uiText("Да") : value === 'no' ? uiText("Нет") : uiText("Не указано");
+export const formatMoney = (value: number) => Number(value).toLocaleString(formatLocale) + ' ₽';
 export const formatDate = (value: string) => value ? new Date(value.length === 10 ? value + 'T12:00:00' : value)
-  .toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  .toLocaleDateString(formatLocale, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
 export function foodGroups(entries: readonly FoodEntry[]): FoodEntry[][] {
   const groups = new Map<string, FoodEntry[]>();

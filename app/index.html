@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#f3f5ef">
+  <meta name="theme-color" content="#f6f2de">
   <title>PetCare — забота о питомцах</title>
   <meta name="description" content="Сервис заботы о питомцах с медицинской картой, совместным доступом, расписанием процедур, ИИ-распознаванием документов и контролем питания">
   <meta property="og:title" content="PetCare — забота о питомцах">
@@ -13,14 +13,29 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20261114-local-ocr">
+  <link rel="stylesheet" href="/styles.css?v=20261118-guest">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <style>
+    #petcare-startup{position:fixed;inset:0;z-index:100;display:grid;place-content:center;justify-items:center;gap:16px;padding:24px;background:#f3f5ef;color:#203c32;text-align:center;font:600 16px/1.5 system-ui,sans-serif}
+    #petcare-startup p{margin:0}
+    #petcare-startup a{color:#205c43}
+    #petcare-startup .startup-retry{visibility:hidden;animation:petcare-show-retry .01s 8s forwards}
+    #petcare-startup .startup-spinner{width:32px;height:32px;border:3px solid #d4e0d6;border-top-color:#276449;border-radius:50%;animation:petcare-spin .85s linear infinite}
+    @keyframes petcare-spin{to{transform:rotate(360deg)}}
+    @keyframes petcare-show-retry{to{visibility:visible}}
+    @media(prefers-reduced-motion:reduce){#petcare-startup .startup-spinner{animation:none}}
+  </style>
 </head>
 <body>
+  <div id="petcare-startup" role="status">
+    <span class="startup-spinner" aria-hidden="true"></span>
+    <p>Открываем PetCare…</p>
+    <a class="startup-retry" href="">Обновить страницу</a>
+  </div>
   <div id="root"></div>
-  <noscript>Для работы PetCare включите JavaScript в браузере.</noscript>
+  <noscript><style>#petcare-startup{display:none}</style>Для работы PetCare включите JavaScript в браузере.</noscript>
   <script type="module" src="/frontend/main.tsx"></script>
 </body>
 </html>

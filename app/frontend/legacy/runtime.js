@@ -1,4 +1,6 @@
+import { formatLocale, uiText, htmlUiText } from '../i18n';
 import { createApiClient } from '../lib/api';
+import { setAppearanceAccount } from '../features/appearance/store';
 import { bindFilePicker, filePickerMarkup, readUpload, uploadError } from '../lib/filePicker';
 import { publishNutrition, resetNutritionFilters } from '../features/nutrition/store';
 
@@ -14,6 +16,18 @@ document.getElementById('match').hidden = !FRIENDS_ENABLED;
 const STORAGE_AUTH_KEY = 'petcare_jwt';
 const STORAGE_PUSH_KEY = 'petcare_push_settings';
 let authToken = '';
+
+function enterAdmin(token) {
+  try {
+    sessionStorage.setItem('petcare_admin_session', token);
+  } catch {
+    throw new Error(uiText("Разрешите браузеру хранить данные сеанса для входа в панель администратора."));
+  }
+  authToken = '';
+  setAppearanceAccount(null);
+  try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
+  location.replace('/admin');
+}
 
 function cleanLegacyStorage() {
   try {
@@ -38,31 +52,31 @@ try {
 const apiFetch = createApiClient({
   getToken: () => authToken,
   onUnauthorized: () => {
-    authToken = '';
-    try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
+    clearSession();
+    render();
   },
   onMutationError: error => setTimeout(() => {
-    notify('Не сохранено: ' + error.message);
+    notify((uiText("Не сохранено:")+" ") + error.message);
     if (authToken) syncServerData(true);
   }, 100),
 });
 
 const uid = () => crypto.randomUUID?.() || String(Date.now() + Math.random());
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const date = s => s ? new Date(s.length === 10 ? s + 'T12:00:00' : s).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
-const money = n => n ? Number(n).toLocaleString('ru-RU') + ' ₽' : '—';
+const date = s => s ? new Date(s.length === 10 ? s + 'T12:00:00' : s).toLocaleDateString(formatLocale, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const money = n => n ? Number(n).toLocaleString(formatLocale) + ' ₽' : '—';
 
 const mskDateParts = (d = new Date()) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).filter(x => x.type !== 'literal').map(x => [x.type, x.value]));
 const mskDay = (d = new Date()) => { const v = mskDateParts(d); return v.year + '-' + v.month + '-' + v.day; };
 const today = () => mskDay();
 const mskMoment = at => new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(at) ? at : at + '+03:00');
-const mskLabel = at => new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(mskMoment(at));
+const mskLabel = at => new Intl.DateTimeFormat(formatLocale, { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(mskMoment(at));
 const when = s => mskLabel(s);
 const mskNow = () => { const x = mskDateParts(); return x.year + '-' + x.month + '-' + x.day + 'T' + x.hour + ':' + x.minute; };
 const mskShift = (day, amount) => { const d = new Date(day + 'T12:00:00+03:00'); d.setUTCDate(d.getUTCDate() + amount); return d.toISOString().slice(0, 10); };
 
-const kindLabel = { food: 'Корм', treat: 'Лакомство', supplement: 'Добавка' };
-const healthLabel = { vaccination: 'Прививка', parasite: 'Обработка', vet: 'Ветеринар', other: 'Другое' };
+const kindLabel = { food: uiText("Корм"), treat: uiText("Лакомство"), supplement: uiText("Добавка") };
+const healthLabel = { vaccination: uiText("Прививка"), parasite: uiText("Обработка"), vet: uiText('Ветеринар'), other: uiText("Другое") };
 const rating = v => v === 'yes' ? 'Да' : v === 'no' ? 'Нет' : 'Не указано';
 
 // =====================================================================
@@ -73,8 +87,11 @@ try {
   savedPushSettings = JSON.parse(localStorage.getItem(STORAGE_PUSH_KEY) || 'null');
 } catch {}
 
+const guestUser = () => ({ id: null, name: uiText("Гость"), email: '', timezone: 'Europe/Moscow' });
+const hasSession = () => Boolean(authToken && state.user.id != null);
+
 let state = {
-  user: { id: 1, name: 'Илья', email: 'demo1@petcare.app', timezone: 'Europe/Moscow' },
+  user: guestUser(),
   selected: null,
   pets: [],
   events: [],
@@ -99,11 +116,54 @@ let state = {
   }
 };
 
+function clearSession() {
+  authToken = '';
+  setAppearanceAccount(null);
+  try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
+  state.user = guestUser();
+  state.selected = null;
+  for (const collection of [
+    'pets', 'events', 'activity', 'health', 'prescriptions', 'weights', 'nutrition',
+    'mealPlans', 'feedingLogs', 'documents', 'shopping', 'members',
+  ]) state[collection] = [];
+  state.contacts = {};
+  state.avatar = {};
+  lastChange = null;
+  matchInspectProfileId = null;
+  for (const id of Object.keys(matchDataByPet)) delete matchDataByPet[id];
+}
+
+let connectionTimer, showSlowConnection = false, sessionLoadFailed = false;
+function updateConnectionStatus() {
+  const offline = navigator.onLine === false;
+  const status = $('connection-status');
+  status.hidden = !offline && !showSlowConnection && !sessionLoadFailed;
+  status.dataset.waiting = String(!offline && showSlowConnection);
+  $('connection-message').textContent = offline ? uiText("Нет подключения к интернету")
+    : showSlowConnection ? uiText("Загружаем данные…")
+    : uiText("Не удалось проверить сеанс");
+  $('connection-retry').hidden = offline || showSlowConnection || !sessionLoadFailed;
+}
+
+function beginConnectionWait() {
+  window.clearTimeout(connectionTimer);
+  connectionTimer = window.setTimeout(() => {
+    showSlowConnection = true;
+    updateConnectionStatus();
+  }, 500);
+}
+
+function endConnectionWait() {
+  window.clearTimeout(connectionTimer);
+  showSlowConnection = false;
+  updateConnectionStatus();
+}
+
 async function savePushSettings() {
   try {
     if(authToken) await apiFetch('/notifications/settings',{method:'PUT',body:JSON.stringify(state.settings)});
     localStorage.setItem(STORAGE_PUSH_KEY,JSON.stringify(state.settings));
-  } catch(err) { notify('Настройки не сохранены: '+err.message); throw err; }
+  } catch(err) { notify((uiText("Настройки не сохранены:")+" ")+err.message); throw err; }
 
 }
 
@@ -115,7 +175,7 @@ function isForPet(item, currentPet) {
   return String(item.petId ?? item.pet_id ?? '') === String(currentPet.id);
 }
 
-function showCopiedToast(message = 'Скопировано') {
+function showCopiedToast(message = uiText("Скопировано")) {
   $('toast').textContent = message;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').textContent = ''; }, 3000);
@@ -140,12 +200,12 @@ window.copyPetCode = function(code) {
   if (!code) return;
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(code).then(() => {
-      showCopiedToast('Скопировано');
+      showCopiedToast(uiText("Скопировано"));
     }).catch(() => {
-      notify('Не удалось скопировать. Выделите код и скопируйте вручную.');
+      notify(uiText("Не удалось скопировать. Выделите код и скопируйте вручную."));
     });
   } else {
-    notify('Выделите код и скопируйте вручную.');
+    notify(uiText("Выделите код и скопируйте вручную."));
   }
 };
 
@@ -169,27 +229,45 @@ function logActivity(petId, action, icon = '🐾', actor = state.user.name || '�
 let syncTail = Promise.resolve(), syncPending = 0;
 function syncServerData(silent = false) {
   syncPending += 1;
-  const request = syncTail.then(() => loadServerData(silent));
+  const request = syncTail.then(async () => {
+    const showProgress = !silent && Boolean(authToken);
+    if (showProgress) beginConnectionWait();
+    try {
+      await loadServerData();
+    } finally {
+      if (showProgress) endConnectionWait();
+    }
+  });
   syncTail = request.catch(() => {});
   return request.finally(() => { syncPending -= 1; });
 }
 
-async function loadServerData(silent = false) {
+window.addEventListener('petcare-premium-updated', () => { if (authToken) void syncServerData(true); });
+
+async function loadServerData() {
   try {
     if (!authToken) {
-      updateAuthStatusUI();
-      render();
       return;
     }
 
     // 1. Check user session
+    const sessionToken = authToken;
     const u = await apiFetch('/auth/session');
+    if (sessionToken !== authToken) return;
+    sessionLoadFailed = false;
+    if (u?.is_admin) { enterAdmin(authToken); return; }
     if (u) {
+      setAppearanceAccount(u, theme => apiFetch('/auth/profile', {
+        method: 'PATCH', body: JSON.stringify({ theme }),
+      }));
       state.user = {
         id: u.id,
         name: u.full_name || state.user.name,
         email: u.email || state.user.email,
-        timezone: u.timezone || 'Europe/Moscow'
+        timezone: u.timezone || 'Europe/Moscow',
+        emailVerified: u.email_verified,
+        premium: u.premium,
+        premiumUntil: u.premium_until
       };
     }
 
@@ -260,7 +338,7 @@ async function loadServerData(silent = false) {
                 doctor: r.doctor || '',
                 result: r.result || '',
                 nextDate: r.next_date || '',
-                attachment: r.file_data ? { name: r.file_name || 'Файл', data: r.file_data } : null
+                attachment: r.file_data ? { name: r.file_name || uiText("Файл"), data: r.file_data } : null
               });
             });
           }
@@ -412,22 +490,22 @@ async function loadServerData(silent = false) {
       // 5. Load match data for active pet
       await loadMatchDataForActivePet(true);
     }
-    if (!silent) updateAuthStatusUI();
   } catch (err) {
     console.warn('syncServerData notice:', err.message);
+    sessionLoadFailed = Boolean(authToken && !hasSession());
   } finally {
-    updateAuthStatusUI();
     render();
+    updateConnectionStatus();
     if (typeof scheduleNextExactPush === 'function') scheduleNextExactPush();
   }
 }
 
 function updateAuthStatusUI() {
-  const loggedIn = Boolean(authToken && state.user?.email);
+  const loggedIn = hasSession();
   const openBtn = $('api-open');
   if (openBtn) {
     openBtn.hidden = loggedIn;
-    openBtn.textContent = 'Войти в аккаунт';
+    openBtn.textContent = uiText("Войти в аккаунт");
   }
   const settingsBtn = $('btn-account-settings');
   if (settingsBtn) settingsBtn.hidden = !loggedIn;
@@ -435,6 +513,7 @@ function updateAuthStatusUI() {
   if (logoutBtn) logoutBtn.hidden = !loggedIn;
   const loginModalBtn = $('btn-open-auth-modal');
   if (loginModalBtn) loginModalBtn.hidden = loggedIn;
+  $('profile-settings').hidden = !loggedIn;
 }
 
 // =====================================================================
@@ -442,7 +521,7 @@ function updateAuthStatusUI() {
 // =====================================================================
 function petKind(species) {
   const s = (species || '').toLowerCase();
-  return /собак|пёс|пес|овчарк|корги/.test(s) ? 'dog' : /хомяк/.test(s) ? 'hamster' : /птиц|попуг|канар/.test(s) ? 'bird' : /рыб/.test(s) ? 'fish' : /ящер|геккон/.test(s) ? 'lizard' : /зме|питон/.test(s) ? 'snake' : 'cat';
+  return /собак|пёс|пес|овчарк|корги|\bdogs?\b|\bpuppy\b/.test(s) ? 'dog' : /хомяк|\bhamsters?\b/.test(s) ? 'hamster' : /птиц|попуг|канар|\bbirds?\b|\bparrots?\b|\bcanar(?:y|ies)\b/.test(s) ? 'bird' : /рыб|\bfish\b/.test(s) ? 'fish' : /ящер|геккон|\blizards?\b|\bgeckos?\b/.test(s) ? 'lizard' : /зме|питон|\bsnakes?\b|\bpythons?\b/.test(s) ? 'snake' : 'cat';
 }
 
 function petMood(petId) {
@@ -463,7 +542,7 @@ function petArt(p, mood = petMood(p.id)) {
   if (kind === 'fish') shape = '<g class="tail"><path d="M86 58l22-19v39Z" fill="' + c + '" stroke="' + ink + '" stroke-width="2.5"/></g><path d="M46 36l14-22 14 22" fill="' + light + '" stroke="' + ink + '" stroke-width="2.5"/><ellipse cx="54" cy="61" rx="39" ry="30" fill="' + c + '" stroke="' + ink + '" stroke-width="2.5"/><path d="M49 78l14 20 13-21" fill="' + light + '" stroke="' + ink + '" stroke-width="2"/><path d="M32 39q-10 21 0 43M77 39q10 21 0 43" fill="none" stroke="' + light + '" stroke-width="5"/>' + face(52, 54, 69);
   if (kind === 'lizard') shape = '<g class="tail"><path d="M82 83Q112 89 106 105" fill="none" stroke="' + c + '" stroke-width="14" stroke-linecap="round"/></g><path d="M37 74l-20 13m64-13 20 13M40 87l-18 15m58-15 18 15" stroke="' + c + '" stroke-width="10" stroke-linecap="round"/><ellipse cx="61" cy="79" rx="31" ry="22" fill="' + c + '" stroke="' + ink + '" stroke-width="2"/><rect x="30" y="24" width="64" height="53" rx="24" fill="' + light + '" stroke="' + ink + '" stroke-width="2.5"/><circle cx="26" cy="62" r="4" fill="' + c + '"/><circle cx="96" cy="62" r="4" fill="' + c + '"/>' + face(62, 47, 62);
   if (kind === 'snake') shape = '<path d="M28 92q-21-24 13-22t49 8q21 18-15 21-30 2-21-22" fill="none" stroke="' + c + '" stroke-width="19" stroke-linecap="round"/><path d="M28 92q-21-24 13-22t49 8q21 18-15 21-30 2-21-22" fill="none" stroke="' + ink + '" stroke-width="2"/><ellipse cx="70" cy="43" rx="31" ry="24" fill="' + light + '" stroke="' + ink + '" stroke-width="2.5"/>' + face(71, 39, 56) + '<path d="M72 69v9m0 0-5 5m5-5 5 5" fill="none" stroke="#dd8d9a" stroke-width="2" stroke-linecap="round"/>';
-  return '<svg class="pet-art mood-' + mood + '" viewBox="0 0 120 120" role="img" aria-label="' + esc(p.species || 'Питомец') + '" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="111" rx="36" ry="5" fill="#71678b" opacity=".13"/>' + shape + '</svg>';
+  return '<svg class="pet-art mood-' + mood + '" viewBox="0 0 120 120" role="img" aria-label="' + esc(p.species || uiText("Питомец")) + '" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="111" rx="36" ry="5" fill="#71678b" opacity=".13"/>' + shape + '</svg>';
 }
 
 function petAvatar(p) {
@@ -471,16 +550,16 @@ function petAvatar(p) {
 }
 
 function petProfileAge(birthDate, now = new Date()) {
-  if (!birthDate) return 'Возраст не указан';
+  if (!birthDate) return uiText("Возраст не указан");
   const birth = new Date(birthDate + 'T12:00:00');
-  if (!Number.isFinite(birth.getTime())) return 'Возраст не указан';
+  if (!Number.isFinite(birth.getTime())) return uiText("Возраст не указан");
   let months = (now.getFullYear() - birth.getFullYear()) * 12 + now.getMonth() - birth.getMonth();
   if (now.getDate() < birth.getDate()) months--;
-  if (months < 0) return 'Возраст не указан';
-  if (months === 0) return 'Меньше месяца';
-  const plural = (n, forms) => n + ' ' + forms[new Intl.PluralRules('ru-RU').select(n)];
+  if (months < 0) return uiText("Возраст не указан");
+  if (months === 0) return uiText("Меньше месяца");
+  const plural = (n, forms) => n + ' ' + forms[new Intl.PluralRules(formatLocale).select(n)];
   const years = Math.floor(months / 12), rest = months % 12;
-  return [years ? plural(years, { one: 'год', few: 'года', many: 'лет', other: 'лет' }) : '', rest ? plural(rest, { one: 'месяц', few: 'месяца', many: 'месяцев', other: 'месяцев' }) : ''].filter(Boolean).join(' ');
+  return [years ? plural(years, { one: uiText("год"), few: uiText("года"), many: uiText("лет"), other: uiText("лет") }) : '', rest ? plural(rest, { one: uiText("месяц"), few: uiText("месяца"), many: uiText("месяцев"), other: uiText("месяцев") }) : ''].filter(Boolean).join(' ');
 }
 
 function petProfileLocalDate(now = new Date()) {
@@ -514,7 +593,7 @@ function renderPetAccountSwitcher() {
   if (!current) {
     closePetAccounts();
     $('account-avatar').innerHTML = '';
-    $('account-name').textContent = 'Нет питомцев';
+    $('account-name').textContent = uiText("Нет питомцев");
     $('pet-account-list').innerHTML = '';
     $('pet-account-button').disabled = true;
     return;
@@ -522,13 +601,13 @@ function renderPetAccountSwitcher() {
   $('pet-account-button').disabled = false;
   $('account-avatar').innerHTML = petAvatar(current);
   $('account-name').textContent = current.name;
-  $('pet-account-button').setAttribute('aria-label', 'Аккаунт питомца: ' + current.name);
+  $('pet-account-button').setAttribute('aria-label', (uiText("Аккаунт питомца:")+" ") + current.name);
 
   $('pet-account-list').innerHTML = state.pets.map(p => {
     const chosen = p.id === current.id;
     return '<button type="button" class="account-row ' + (chosen ? 'is-current' : '') + '" data-account-pet="' + esc(p.id) + '" aria-pressed="' + chosen + '">' +
       '<span class="account-avatar" aria-hidden="true">' + petAvatar(p) + '</span>' +
-      '<span class="account-row-copy"><b>' + esc(p.name) + '</b><small>' + esc(p.species) + (p.isShared ? ' · Совместный уход' : '') + '</small></span>' +
+      '<span class="account-row-copy"><b>' + esc(p.name) + '</b><small>' + esc(p.species) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</small></span>' +
       '<span class="account-check" aria-hidden="true">✓</span>' +
     '</button>';
   }).join('');
@@ -559,7 +638,7 @@ function setupPetAccountSwitcher() {
 }
 
 let healthTab = 'overview';
-const pageLabels = { pets: 'Мои питомцы', health: 'Здоровье', nutrition: 'Питание', care: 'Уход и события', documents: 'Документы', match: 'Поиск друзей', profile: 'Профиль и настройки' };
+const pageLabels = { pets: uiText("Мои питомцы"), health: uiText("Здоровье"), nutrition: uiText("Питание"), care: uiText("Уход и события"), documents: uiText("Документы"), match: uiText("Поиск друзей"), profile: uiText("Профиль и настройки") };
 
 function routeHash(name, petId = pet()?.id) {
   if (name === 'pets' || name === 'profile' || !petId) return '#/' + name;
@@ -570,7 +649,7 @@ function routeHash(name, petId = pet()?.id) {
 function mayDiscardPetEdits() {
   const form = $('health-pet-form');
   if (form.dataset.dirty !== 'true') return true;
-  if (!confirm('В карточке питомца есть несохранённые изменения. Выйти без сохранения?')) return false;
+  if (!confirm(uiText("В карточке питомца есть несохранённые изменения. Выйти без сохранения?"))) return false;
   renderHealthPetProfile(true);
   return true;
 }
@@ -596,6 +675,10 @@ function selectPet(id, destination = page) {
 }
 
 function show(name, updateUrl = true) {
+  if (!hasSession()) {
+    render();
+    return;
+  }
   const requestedDocuments = name === 'documents';
   if (requestedDocuments) name = 'health';
   if (name === 'match' && !FRIENDS_ENABLED) { name = 'pets'; history.replaceState(null, '', routeHash('pets')); }
@@ -650,16 +733,16 @@ function renderShell() {
   renderPetAccountSwitcher();
   $('pet-count').textContent = state.pets.length;
   $('owner-name').textContent = state.user.name || 'Владелец';
-  $('owner-initial').textContent = (state.user.name || 'В').slice(0, 1).toUpperCase();
+  $('owner-initial').textContent = (state.user.name || uiText("В")).slice(0, 1).toUpperCase();
   const all = document.querySelector('.all-pets');
   all.classList.toggle('active', page === 'pets');
   if (page === 'pets') all.setAttribute('aria-current', 'page'); else all.removeAttribute('aria-current');
   $('breadcrumbs').innerHTML = page === 'pets' || !current
     ? '<span>PetCare</span><span aria-hidden="true">/</span><b>' + esc(pageLabels[page]) + '</b>'
-    : '<button id="breadcrumb-pets" type="button">Мои питомцы</button><span aria-hidden="true">/</span><b>' + esc(current.name) + '</b><span aria-hidden="true">/</span><span>' + esc(pageLabels[page]) + '</span>';
+    : ("<button id=\"breadcrumb-pets\" type=\"button\">"+htmlUiText("Мои питомцы")+"</button>"+"<span aria-hidden=\"true\">"+"/"+"</span>"+"<b>") + esc(current.name) + '</b><span aria-hidden="true">/</span><span>' + esc(pageLabels[page]) + '</span>';
   if ($('breadcrumb-pets')) $('breadcrumb-pets').onclick = () => show('pets');
-  $('header-date').textContent = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long', weekday: 'short' }).format(new Date());
-  document.title = page === 'pets' || !current ? 'Мои питомцы · PetCare' : current.name + ' · ' + pageLabels[page] + ' · PetCare';
+  $('header-date').textContent = new Intl.DateTimeFormat(formatLocale, { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long', weekday: 'short' }).format(new Date());
+  document.title = page === 'pets' || !current ? uiText("Мои питомцы · PetCare") : current.name + ' · ' + pageLabels[page] + ' · PetCare';
 }
 
 // =====================================================================
@@ -674,6 +757,43 @@ const reminderStatus = e => {
 };
 
 function render() {
+  const loggedIn = hasSession();
+  const shell = $('petcare-shell');
+  shell.dataset.sessionView = loggedIn ? 'member' : 'guest';
+  shell.inert = false;
+  $('guest-preview').hidden = loggedIn;
+  updateAuthStatusUI();
+  for (const control of document.querySelectorAll('.sidebar [data-guest-lock]')) {
+    if (loggedIn) {
+      control.removeAttribute('aria-haspopup');
+      control.removeAttribute('aria-describedby');
+    } else {
+      control.setAttribute('aria-haspopup', 'dialog');
+      control.setAttribute('aria-describedby', 'guest-preview-hint');
+      control.classList.remove('active');
+      control.removeAttribute('aria-current');
+      control.removeAttribute('aria-disabled');
+      control.tabIndex = 0;
+      if (control.matches('a')) control.href = '#guest-preview';
+    }
+  }
+  if (!loggedIn) {
+    closePetAccounts();
+    $('pet-count').textContent = '';
+    $('pet-account-list').replaceChildren();
+    $('match-nav-badge').hidden = true;
+    $('breadcrumbs').replaceChildren();
+    $('header-date').textContent = '';
+    $('account-avatar').textContent = '';
+    $('account-name').textContent = uiText("Питомцы");
+    $('pet-account-button').setAttribute('aria-label', uiText("Аккаунт питомца"));
+    $('pet-account-button').disabled = false;
+    $('owner-name').textContent = uiText("Профиль");
+    $('owner-initial').textContent = '';
+    document.title = uiText("Кабинет PetCare");
+    return;
+  }
+
   const current = pet();
   document.querySelectorAll('.nav [data-page]').forEach(button => { button.href = routeHash(button.dataset.page); button.tabIndex = !current && button.dataset.page !== 'pets' ? -1 : 0; button.setAttribute('aria-disabled', String(!current && button.dataset.page !== 'pets')); });
   $('pet-account-button').disabled = !current;
@@ -683,10 +803,10 @@ function render() {
     $('tomorrow-panel').hidden = true;
     if (!['pets', 'profile'].includes(page)) page = 'pets';
     document.querySelectorAll('.section').forEach(section => section.classList.toggle('active', section.id === page));
-    $('pet-cards').innerHTML = '<p class="empty">Пока нет питомцев. Нажмите «+ Добавить питомца», чтобы создать карточку или подключиться по коду совместного ухода.</p>';
+    $('pet-cards').innerHTML = ("<p class=\"empty\">"+htmlUiText("Пока нет питомцев. Нажмите «+ Добавить питомца», чтобы создать карточку или подключиться по коду совместного ухода.")+"</p>");
     $('pet-count').textContent = '0';
     $('account-avatar').innerHTML = '';
-    $('account-name').textContent = 'Нет питомцев';
+    $('account-name').textContent = uiText("Нет питомцев");
     renderShell();
     renderProfile();
     return;
@@ -712,23 +832,23 @@ function renderPetDirectory() {
   const meals = dailyMealsForPet(selected.id);
   const tomorrow = mskDay(new Date(Date.now()+86400000));
   const next = pending(selected.id).filter(e => mskDay(mskMoment(e.at)) === tomorrow);
-  $('tomorrow-summary').textContent = next.length ? 'Запланировано: ' + next.length + ' · ' + next[0].title : 'Процедур нет · кормлений: ' + meals.length;
-  $('tomorrow-overview').innerHTML = (next.length ? next.map(e=>'<p><a class="doc-link" href="'+esc(routeHash('care'))+'">'+esc(e.title)+' · '+esc(mskLabel(e.at))+'</a></p>').join('') : '<p class="small">На завтра процедур нет.</p>') + (meals.length ? '<p>Кормлений: '+meals.length+'</p>' : '');
-  $('today-overview').innerHTML = '<p>' + esc(selected.name) + ' · расписание по Москве</p>' +
-    (todayEvents.length ? todayEvents.slice(0, 3).map(e => '<p><a class="doc-link" href="' + esc(routeHash('care')) + '">' + esc(e.title) + ' · ' + esc(mskLabel(e.at)) + '</a></p>').join('') : '<p class="small">На сегодня процедур нет.</p>') +
-    (meals.length ? '<a class="doc-link" href="' + esc(routeHash('nutrition')) + '">Кормления на сегодня: ' + meals.length + ' · открыть расписание</a>' : '');
+  $('tomorrow-summary').textContent = next.length ? (uiText("Запланировано:")+" ") + next.length + ' · ' + next[0].title : (uiText("Процедур нет · кормлений:")+" ") + meals.length;
+  $('tomorrow-overview').innerHTML = (next.length ? next.map(e=>'<p><a class="doc-link" href="'+esc(routeHash('care'))+'">'+esc(e.title)+' · '+esc(mskLabel(e.at))+'</a></p>').join('') : ("<p class=\"small\">"+htmlUiText("На завтра процедур нет.")+"</p>")) + (meals.length ? ("<p>"+htmlUiText("Кормлений:")+" ")+meals.length+'</p>' : '');
+  $('today-overview').innerHTML = '<p>' + esc(selected.name) + (" · "+htmlUiText("расписание по Москве")+"</p>") +
+    (todayEvents.length ? todayEvents.slice(0, 3).map(e => '<p><a class="doc-link" href="' + esc(routeHash('care')) + '">' + esc(e.title) + ' · ' + esc(mskLabel(e.at)) + '</a></p>').join('') : ("<p class=\"small\">"+htmlUiText("На сегодня процедур нет.")+"</p>")) +
+    (meals.length ? '<a class="doc-link" href="' + esc(routeHash('nutrition')) + ("\">"+htmlUiText("Кормления на сегодня:")+" ") + meals.length + (" · "+htmlUiText("открыть расписание")+"</a>") : '');
   $('pet-cards').innerHTML = state.pets.map((p, index) => {
     const events = pending(p.id), overdueEvents = events.filter(e => reminderStatus(e) === 'overdue'), overdue = overdueEvents.length > 0;
-    const status = overdue ? 'Просрочено: ' + overdueEvents[0].title + ' · ' + mskLabel(overdueEvents[0].at) + (overdueEvents.length > 1 ? ' · всего ' + overdueEvents.length : '') : events.length ? 'Ближайшее: ' + mskLabel(events[0].at) : (p.isShared ? 'Совместный уход активен' : 'Нет запланированных событий');
+    const status = overdue ? (uiText("Просрочено:")+" ") + overdueEvents[0].title + ' · ' + mskLabel(overdueEvents[0].at) + (overdueEvents.length > 1 ? (" · "+uiText("всего")+" ") + overdueEvents.length : '') : events.length ? (uiText("Ближайшее:")+" ") + mskLabel(events[0].at) : (p.isShared ? uiText("Совместный уход активен") : uiText("Нет запланированных событий"));
     const art = petAvatar(p);
     const shareHtml = p.shareCode
-      ? '<button type="button" class="pet-card-code" data-copy-code="' + esc(p.shareCode) + '" title="Скопировать код для совместного ухода">' +
-          '<span>Код:</span><code>' + esc(p.shareCode) + '</code><span class="copy-label">копировать</span>' +
+      ? '<button type="button" class="pet-card-code" data-copy-code="' + esc(p.shareCode) + (htmlUiText("\" title=\"Скопировать код для совместного ухода\">")) +
+          ("<span>"+htmlUiText("Код:")+"</span>"+"<code>") + esc(p.shareCode) + ("</code>"+"<span class=\"copy-label\">"+htmlUiText("копировать")+"</span>") +
         '</button>'
       : '';
     return '<div class="pet-card">' +
       '<span class="pet-card-visual">' +
-        '<span class="pet-number">ПИТОМЕЦ ' + String(index + 1).padStart(2, '0') + (p.isShared ? ' · СОВМЕСТНЫЙ' : '') + '</span>' +
+        ("<span class=\"pet-number\">"+htmlUiText("ПИТОМЕЦ")+" ") + String(index + 1).padStart(2, '0') + (p.isShared ? (" · "+uiText("СОВМЕСТНЫЙ")) : '') + '</span>' +
         '<span class="pet-visual-mark" aria-hidden="true"><svg><use href="#heart"/></svg></span>' +
         '<span class="avatar">' + art + '</span>' +
       '</span>' +
@@ -737,8 +857,8 @@ function renderPetDirectory() {
         '<span class="pet-card-meta">' + esc(p.species) + ' · ' + esc(p.breed || 'Метис') + ' · ' + esc(petProfileAge(p.birthDate)) + '</span>' +
         shareHtml +
         '<span class="pet-card-status"><span class="status-dot ' + (overdue ? 'warning' : '') + '"></span>' + esc(status) + '</span>' +
-        (overdue ? '<button type="button" class="btn tiny" data-overdue-pet="' + esc(p.id) + '">' + (overdueEvents.length > 1 ? 'Посмотреть просроченные' : 'Посмотреть событие') + '</button>' : '') +
-        '<button type="button" class="pet-card-footer" data-open-pet="' + esc(p.id) + '" aria-label="Открыть карточку: ' + esc(p.name) + '"><span>Открыть карточку</span><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg></span></button>' +
+        (overdue ? '<button type="button" class="btn tiny" data-overdue-pet="' + esc(p.id) + '">' + (overdueEvents.length > 1 ? uiText("Посмотреть просроченные") : uiText("Посмотреть событие")) + '</button>' : '') +
+        '<button type="button" class="pet-card-footer" data-open-pet="' + esc(p.id) + ("\" aria-label=\""+htmlUiText("Открыть карточку:")+" ") + esc(p.name) + ("\">"+"<span>"+htmlUiText("Открыть карточку")+"</span>"+"<span aria-hidden=\"true\">"+"<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+"<path d=\"M7 17 17 7M7 7h10v10\"/>"+"</svg>"+"</span>"+"</button>") +
       '</span>' +
     '</div>';
   }).join('');
@@ -767,11 +887,11 @@ function renderPetHighlights() {
   if (!p) return;
   renderHealthPetProfile();
   const entries = state.activity.filter(a => isForPet(a, p)).slice(0, 12);
-  $('care-activity').innerHTML = entries.map(a => '<div class="activity-item"><span class="activity-icon"><svg aria-hidden="true"><use href="#paw"/></svg></span><div><b>' + esc(a.action) + '</b><p>' + esc(a.actor) + '</p></div><time>' + esc(when(a.at)) + '</time></div>').join('') || '<p class="empty">Записей пока нет. Отметьте первое действие по уходу.</p>';
+  $('care-activity').innerHTML = entries.map(a => '<div class="activity-item"><span class="activity-icon"><svg aria-hidden="true"><use href="#paw"/></svg></span><div><b>' + esc(a.action) + '</b><p>' + esc(a.actor) + '</p></div><time>' + esc(when(a.at)) + '</time></div>').join('') || ("<p class=\"empty\">"+htmlUiText("Записей пока нет. Отметьте первое действие по уходу.")+"</p>");
 }
 
 // HEALTH SECTION
-const filters = [['all', 'Все'], ['vaccination', 'Прививки'], ['parasite', 'Обработки'], ['vet', 'Ветеринар'], ['other', 'Другое']];
+const filters = [['all', uiText("Все")], ['vaccination', uiText("Прививки")], ['parasite', uiText("Обработки")], ['vet', uiText('Ветеринар')], ['other', uiText("Другое")]];
 
 function renderHealth() {
   // A background refresh must not collapse the action the user is opening.
@@ -781,39 +901,39 @@ function renderHealth() {
   ));
   const p = pet();
   if (!p) return;
-  $('health-pet-name').textContent = p.name + (p.isShared ? ' · Совместный уход' : '');
+  $('health-pet-name').textContent = p.name + (p.isShared ? (" · "+uiText("Совместный уход")) : '');
   $('health-filters').innerHTML = filters.map(([v, t]) => '<button class="chip ' + (healthFilter === v ? 'active' : '') + '" data-health-filter="' + v + '" type="button">' + t + '</button>').join('');
   document.querySelectorAll('[data-health-filter]').forEach(b => b.onclick = () => { healthFilter = b.dataset.healthFilter; renderHealth(); });
 
   const rows = state.health.filter(x => isForPet(x, p) && (healthFilter === 'all' || x.type === healthFilter)).sort((a, b) => b.date.localeCompare(a.date));
-  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record" data-health-record="' + esc(x.id) + '"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || 'Запись') + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && 'Клиника: ' + x.clinic, x.doctor && 'Врач: ' + x.doctor, x.result && 'Результат: ' + x.result, x.notes, x.nextDate && 'Следующая процедура: ' + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + '">Скачать вложение: ' + esc(x.attachment.name) + '</a>' : '') + '<details class="record-actions"' + (openRecords.has(String(x.id)) ? ' open' : '') + '><summary aria-label="Ещё: ' + esc(x.title || healthLabel[x.type] || 'Запись о здоровье') + '">Ещё</summary><button class="btn tiny ghost danger" type="button" data-del-health="' + esc(x.id) + '">Удалить</button></details></article>').join('') : '<p class="empty">Записей пока нет.</p>';
+  $('health-records').innerHTML = rows.length ? rows.map(x => '<article class="record" data-health-record="' + esc(x.id) + '"><div class="record-title"><b>' + esc(x.title || healthLabel[x.type]) + '</b><span class="type">' + esc(healthLabel[x.type] || uiText("Запись")) + '</span></div><time>' + esc(date(x.date)) + '</time><p>' + [x.product, x.clinic && (uiText("Клиника:")+" ") + x.clinic, x.doctor && (uiText("Врач:")+" ") + x.doctor, x.result && (uiText("Результат:")+" ") + x.result, x.notes, x.nextDate && (uiText("Следующая процедура:")+" ") + date(x.nextDate)].filter(Boolean).map(esc).join(' · ') + '</p>' + (x.attachment?.data ? '<a class="doc-link" href="' + esc(x.attachment.data) + '" download="' + esc(x.attachment.name) + ("\">"+htmlUiText("Скачать вложение:")+" ") + esc(x.attachment.name) + '</a>' : '') + '<details class="record-actions"' + (openRecords.has(String(x.id)) ? ' open' : '') + (">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(x.title || healthLabel[x.type] || uiText("Запись о здоровье")) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<button class=\"btn tiny ghost danger\" type=\"button\" data-del-health=\"") + esc(x.id) + ("\">"+htmlUiText("Удалить")+"</button>"+"</details>"+"</article>")).join('') : ("<p class=\"empty\">"+htmlUiText("Записей пока нет.")+"</p>");
 
   $('health-records').querySelectorAll('[data-del-health]').forEach(btn => {
     btn.onclick = async () => {
       const rec = state.health.find(x => x.id === btn.dataset.delHealth);
       if (!rec) return;
-      if (!confirm('Удалить запись «' + (rec.title || 'О здоровье') + '»? Это действие нельзя отменить.')) return;
+      if (!confirm((uiText("Удалить запись")+" «") + (rec.title || uiText("О здоровье")) + ("»"+uiText("? Это действие нельзя отменить.")))) return;
       btn.disabled = true;
       try {
         if (rec.serverId) await apiFetch('/health-records/' + rec.serverId, {method:'DELETE'});
-        state.health = state.health.filter(x => x.id !== rec.id); renderHealth(); notify('Запись удалена');
-      } catch (error) { notify('Не удалось удалить запись. ' + error.message); }
+        state.health = state.health.filter(x => x.id !== rec.id); renderHealth(); notify(uiText("Запись удалена"));
+      } catch (error) { notify((uiText("Не удалось удалить запись.")+" ") + error.message); }
       finally { btn.disabled = false; }
     };
   });
 
-  $('prescriptions').innerHTML = state.prescriptions.filter(x => isForPet(x, p)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(x => '<article class="record"><div class="record-title"><b>' + esc(x.name) + '</b><span class="type">' + esc(x.status || 'Активно') + '</span></div><p>' + esc(x.dose || 'Дозировка не указана') + ' · ' + esc(x.times || 'По назначению') + ' · ' + esc(x.duration || 'Курс') + '</p><time>С ' + esc(date(x.startDate)) + '</time><details class="record-actions"><summary aria-label="Ещё: ' + esc(x.name) + '">Ещё</summary><button class="btn tiny ghost danger" type="button" data-del-presc="' + esc(x.id) + '">Удалить</button></details></article>').join('') || '<p class="empty">Назначений пока нет.</p>';
+  $('prescriptions').innerHTML = state.prescriptions.filter(x => isForPet(x, p)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(x => '<article class="record"><div class="record-title"><b>' + esc(x.name) + '</b><span class="type">' + esc(uiText(x.status || 'Активно')) + '</span></div><p>' + esc(x.dose || uiText("Дозировка не указана")) + ' · ' + esc(x.times || uiText("По назначению")) + ' · ' + esc(x.duration || uiText("Курс")) + ("</p>"+"<time>"+htmlUiText("С")+" ") + esc(date(x.startDate)) + ("</time>"+"<details class=\"record-actions\">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(x.name) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<button class=\"btn tiny ghost danger\" type=\"button\" data-del-presc=\"") + esc(x.id) + ("\">"+htmlUiText("Удалить")+"</button>"+"</details>"+"</article>")).join('') || ("<p class=\"empty\">"+htmlUiText("Назначений пока нет.")+"</p>");
 
   $('prescriptions').querySelectorAll('[data-del-presc]').forEach(btn => {
     btn.onclick = async () => {
       const pr = state.prescriptions.find(x => x.id === btn.dataset.delPresc);
       if (!pr) return;
-      if (!confirm('Удалить назначение «' + pr.name + '»? Это действие нельзя отменить.')) return;
+      if (!confirm((uiText("Удалить назначение")+" «") + pr.name + ("»"+uiText("? Это действие нельзя отменить.")))) return;
       btn.disabled = true;
       try {
         if (pr.serverId) await apiFetch('/prescriptions/' + pr.serverId, {method:'DELETE'});
-        state.prescriptions = state.prescriptions.filter(x => x.id !== pr.id); renderHealth(); notify('Назначение удалено');
-      } catch (error) { notify('Не удалось удалить назначение. ' + error.message); }
+        state.prescriptions = state.prescriptions.filter(x => x.id !== pr.id); renderHealth(); notify(uiText("Назначение удалено"));
+      } catch (error) { notify((uiText("Не удалось удалить назначение.")+" ") + error.message); }
       finally { btn.disabled = false; }
     };
   });
@@ -825,38 +945,38 @@ function renderWeight() {
   const p = pet(), period = $('weight-period').value, cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - Number(period));
   const arr = state.weights.filter(w => isForPet(w, p) && (period === 'all' || new Date(w.date) >= cutoff)).sort((a, b) => a.date.localeCompare(b.date));
-  $('last-weight').textContent = arr.length ? String(arr.at(-1).kg).replace('.', ',') + ' кг' : 'Нет измерений';
-  $('weight-history').textContent = arr.map(x => date(x.date) + ' · ' + String(x.kg).replace('.', ',') + ' кг').join('  ·  ');
+  $('last-weight').textContent = arr.length ? String(arr.at(-1).kg).replace('.', ',') + (" "+uiText("кг")) : uiText("Нет измерений");
+  $('weight-history').textContent = arr.map(x => date(x.date) + ' · ' + String(x.kg).replace('.', ',') + (" "+uiText("кг"))).join('  ·  ');
   if (!arr.length) {
-    $('weight-chart').innerHTML = '<p class="empty">За выбранный период измерений нет.</p>';
+    $('weight-chart').innerHTML = ("<p class=\"empty\">"+htmlUiText("За выбранный период измерений нет.")+"</p>");
     return;
   }
   const vals = arr.map(x => Number(x.kg)), lo = Math.max(0, Math.floor((Math.min(...vals) - 0.25) * 10) / 10), hi = Math.ceil((Math.max(...vals) + 0.25) * 10) / 10, span = Math.max(hi - lo, 0.5);
   const points = arr.map((x, i) => [arr.length === 1 ? 200 : 20 + i * 360 / (arr.length - 1), 145 - (Number(x.kg) - lo) / span * 105]);
-  $('weight-chart').innerHTML = '<svg viewBox="0 0 400 170" role="img" aria-label="График веса"><path d="M20 145H380M20 90H380M20 38H380" stroke="#dce4da" stroke-dasharray="4 5"/><polyline points="' + points.map(pt => pt.join(',')).join(' ') + '" fill="none" stroke="#286247" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' + points.map(([x, y]) => '<circle cx="' + x + '" cy="' + y + '" r="4.5" fill="#286247" stroke="#fffefa" stroke-width="2"/>').join('') + '<text x="2" y="39" font-size="9" fill="#5e7065">' + hi.toFixed(1) + '</text><text x="2" y="148" font-size="9" fill="#5e7065">' + lo.toFixed(1) + '</text></svg><div class="chart-labels"><span>' + esc(date(arr[0].date)) + '</span><span>' + esc(date(arr.at(-1).date)) + '</span></div>';
+  $('weight-chart').innerHTML = ("<svg viewBox=\"0 0 400 170\" role=\"img\" aria-label=\""+htmlUiText("График веса")+"\">"+"<path d=\"M20 145H380M20 90H380M20 38H380\" stroke=\"#dce4da\" stroke-dasharray=\"4 5\"/>"+"<polyline points=\"") + points.map(pt => pt.join(',')).join(' ') + '" fill="none" stroke="#286247" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' + points.map(([x, y]) => '<circle cx="' + x + '" cy="' + y + '" r="4.5" fill="#286247" stroke="#fffefa" stroke-width="2"/>').join('') + '<text x="2" y="39" font-size="9" fill="#5e7065">' + hi.toFixed(1) + '</text><text x="2" y="148" font-size="9" fill="#5e7065">' + lo.toFixed(1) + '</text></svg><div class="chart-labels"><span>' + esc(date(arr[0].date)) + '</span><span>' + esc(date(arr.at(-1).date)) + '</span></div>';
 }
 $('weight-period').onchange = renderWeight;
 
 // HEALTH INLINE PET PROFILE FORM
-const field = (name, label, type = 'text', opts = {}) => '<label class="field ' + (opts.full ? 'full' : '') + '">' + label + (type === 'select' ? '<select name="' + name + '" ' + (opts.required ? 'required' : '') + '>' + opts.options.map(([v, t]) => '<option value="' + esc(v) + '">' + esc(t) + '</option>').join('') + '</select>' : type === 'textarea' ? '<textarea name="' + name + '" placeholder="' + esc(opts.placeholder || '') + '"></textarea>' : '<input name="' + name + '" type="' + type + '" ' + (opts.required ? 'required' : '') + ' ' + (opts.min ? 'min="' + opts.min + '"' : '') + ' ' + (opts.max ? 'max="' + opts.max + '"' : '') + ' ' + (opts.step ? 'step="' + opts.step + '"' : '') + ' placeholder="' + esc(opts.placeholder || '') + '">') + '</label>';
-const f = { date: n => field(n, 'Дата', 'date', { required: true }), notes: () => field('notes', 'Комментарий', 'textarea', { full: true }) };
+const field = (name, label, type = 'text', opts = {}) => '<label class="field ' + (opts.full ? 'full' : '') + '">' + esc(uiText(label)) + (type === 'select' ? '<select name="' + name + '" ' + (opts.required ? 'required' : '') + '>' + opts.options.map(([v, t]) => '<option value="' + esc(v) + '">' + esc(uiText(t)) + '</option>').join('') + '</select>' : type === 'textarea' ? '<textarea name="' + name + '" placeholder="' + esc(opts.placeholder || '') + '"></textarea>' : '<input name="' + name + '" type="' + type + '" ' + (opts.required ? 'required' : '') + ' ' + (opts.min ? 'min="' + opts.min + '"' : '') + ' ' + (opts.max ? 'max="' + opts.max + '"' : '') + ' ' + (opts.step ? 'step="' + opts.step + '"' : '') + ' placeholder="' + esc(opts.placeholder || '') + '">') + '</label>';
+const f = { date: n => field(n, uiText("Дата"), 'date', { required: true }), notes: () => field('notes', uiText("Комментарий"), 'textarea', { full: true }) };
 
 function petProfileFields(p) {
   const shareBlock = p?.shareCode
-    ? '<div class="field wide-mobile"><label>Код совместного ухода</label><div class="join-input-group" style="margin-top:8px"><input type="text" aria-label="Код совместного ухода" value="' + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + '">Скопировать</button></div></div>'
+    ? ("<div class=\"field wide-mobile\">"+"<label>"+htmlUiText("Код совместного ухода")+"</label>"+"<div class=\"join-input-group\" style=\"margin-top:8px\">"+"<input type=\"text\" aria-label=\""+htmlUiText("Код совместного ухода")+"\" value=\"") + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + ("\">"+htmlUiText("Скопировать")+"</button>"+"</div>"+"</div>")
     : '';
-  return field('name', 'Имя', 'text', { required: true }) +
-    field('species', 'Вид', 'text', { required: true, placeholder: 'Кошка, собака…' }) +
-    field('breed', 'Порода', 'text', { placeholder: 'Порода или метис' }) +
-    field('birthDate', 'Дата рождения', 'date', { max: petProfileLocalDate() }) +
-    '<label class="field wide-mobile">Возраст<input name="calculatedAge" readonly aria-readonly="true"><span class="profile-age-hint">Рассчитывается по дате рождения</span></label>' +
-    field('sex', 'Пол', 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
-    field('sterilized', 'Стерилизация', 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
-    '<label class="field wide-mobile">Номер чипа<input name="chip" type="text" placeholder="15-значный номер микрочипа"></label>' +
+  return field('name', uiText("Имя"), 'text', { required: true }) +
+    field('species', uiText("Вид"), 'text', { required: true, placeholder: uiText("Кошка, собака…") }) +
+    field('breed', uiText("Порода"), 'text', { placeholder: uiText("Порода или метис") }) +
+    field('birthDate', uiText("Дата рождения"), 'date', { max: petProfileLocalDate() }) +
+    ("<label class=\"field wide-mobile\">"+htmlUiText("Возраст")+"<input name=\"calculatedAge\" readonly aria-readonly=\"true\">"+"<span class=\"profile-age-hint\">"+htmlUiText("Рассчитывается по дате рождения")+"</span>"+"</label>") +
+    field('sex', uiText("Пол"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
+    field('sterilized', uiText("Стерилизация"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
+    ("<label class=\"field wide-mobile\">"+htmlUiText("Номер чипа")+"<input name=\"chip\" type=\"text\" placeholder=\""+htmlUiText("15-значный номер микрочипа")+"\">"+"</label>") +
     shareBlock +
     '<div class="profile-notes-fields">' +
-      field('notes', 'Особенности', 'textarea', { placeholder: 'Привычки, характер и особенности ухода' }) +
-      field('marks', 'Важные отметки', 'textarea', { placeholder: 'Аллергии и другие важные сведения' }) +
+      field('notes', 'Особенности', 'textarea', { placeholder: uiText("Привычки, характер и особенности ухода") }) +
+      field('marks', 'Важные отметки', 'textarea', { placeholder: uiText("Аллергии и другие важные сведения") }) +
     '</div>';
 }
 
@@ -882,14 +1002,14 @@ function renderHealthPetProfile(force = false) {
   if (!p) return;
   $('health-profile-avatar').innerHTML = petAvatar(p);
   $('health-profile-name').textContent = p.name;
-  $('health-profile-meta').textContent = [p.species, p.breed, p.shareCode && ('Код: ' + p.shareCode)].filter(Boolean).join(' · ');
+  $('health-profile-meta').textContent = [p.species, p.breed, p.shareCode && ((uiText("Код:")+" ") + p.shareCode)].filter(Boolean).join(' · ');
   if (force || form.dataset.petId !== p.id || form.dataset.dirty !== 'true') fillHealthPetForm(p);
 }
 
 const healthPetForm = $('health-pet-form');
 healthPetForm.addEventListener('input', () => { healthPetForm.dataset.dirty = 'true'; });
 healthPetForm.addEventListener('change', () => { healthPetForm.dataset.dirty = 'true'; });
-$('health-profile-reset').onclick = () => { if (healthPetForm.dataset.dirty !== 'true' || confirm('Отменить изменения карточки питомца?')) renderHealthPetProfile(true); };
+$('health-profile-reset').onclick = () => { if (healthPetForm.dataset.dirty !== 'true' || confirm(uiText("Отменить изменения карточки питомца?"))) renderHealthPetProfile(true); };
 
 healthPetForm.onsubmit = async event => {
   event.preventDefault();
@@ -898,8 +1018,8 @@ healthPetForm.onsubmit = async event => {
   const values = Object.fromEntries(['name', 'species', 'breed', 'birthDate', 'sex', 'sterilized', 'notes', 'marks', 'chip'].map(key => [key, String(raw[key] || '').trim()]));
   const feedback = $('health-profile-feedback');
   const fail = message => { feedback.textContent = message; feedback.classList.add('is-error'); feedback.focus(); };
-  if (!values.name || !values.species) { fail('Укажите имя и вид питомца.'); return; }
-  if (values.birthDate && values.birthDate > petProfileLocalDate()) { fail('Дата рождения не может быть в будущем.'); return; }
+  if (!values.name || !values.species) { fail(uiText("Укажите имя и вид питомца.")); return; }
+  if (values.birthDate && values.birthDate > petProfileLocalDate()) { fail(uiText("Дата рождения не может быть в будущем.")); return; }
   const target = state.pets.find(p => p.id === form.dataset.petId) || pet();
   if (!target) return;
 
@@ -921,16 +1041,16 @@ healthPetForm.onsubmit = async event => {
         })
       });
     } catch (err) {
-      fail('Ошибка сохранения на сервере: ' + err.message);
+      fail((uiText("Ошибка сохранения на сервере:")+" ") + err.message);
       return;
     }
   }
   Object.assign(target, values);
-  logActivity(target.id, 'Обновил(а) карточку питомца ' + updated.name, '🐾');
+  logActivity(target.id, (uiText("Обновил(а) карточку питомца")+" ") + updated.name, '🐾');
   form.dataset.dirty = 'false';
   render();
   feedback.classList.remove('is-error');
-  feedback.textContent = 'Карточка сохранена на сервере';
+  feedback.textContent = uiText("Карточка сохранена на сервере");
 };
 
 // NUTRITION SECTION
@@ -957,11 +1077,11 @@ function renderNutrition() {
 
 function renderFeeding() {
   const p = pet(), now = new Date(), plans = dailyMealsForPet(p.id);
-  $('feeding-day').textContent = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(now);
+  $('feeding-day').textContent = new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'long' }).format(now);
   $('feeding-reminders').innerHTML = plans.map(meal => {
     const done = mealIsComplete(meal, now), timing = mealTimeLabel(meal);
-    return '<label class="meal-reminder' + (done ? ' is-complete' : '') + '"><input type="checkbox" data-meal-check="' + esc(meal.id) + '"' + (done ? ' checked' : '') + ' aria-label="' + esc('Покормить: ' + meal.food + ', ' + timing) + '"><span class="meal-reminder-copy"><span class="meal-reminder-heading"><strong>' + esc(meal.food) + '</strong><span class="meal-time">' + esc(timing) + '</span></span>' + (meal.notes ? '<span class="meal-note">' + esc(meal.notes) + '</span>' : '') + '<span class="meal-status">' + (done ? 'Выполнено сегодня' : 'Ежедневно') + '</span></span></label>';
-  }).join('') || '<p class="empty">Питание ещё не добавлено. Нажмите «+ Добавить питание», чтобы составить ежедневное расписание.</p>';
+    return '<label class="meal-reminder' + (done ? ' is-complete' : '') + '"><input type="checkbox" data-meal-check="' + esc(meal.id) + '"' + (done ? ' checked' : '') + ' aria-label="' + esc((uiText("Покормить:")+" ") + meal.food + ', ' + timing) + '"><span class="meal-reminder-copy"><span class="meal-reminder-heading"><strong>' + esc(meal.food) + '</strong><span class="meal-time">' + esc(timing) + '</span></span>' + (meal.notes ? '<span class="meal-note">' + esc(meal.notes) + '</span>' : '') + '<span class="meal-status">' + (done ? uiText("Выполнено сегодня") : uiText("Ежедневно")) + '</span></span></label>';
+  }).join('') || ("<p class=\"empty\">"+htmlUiText("Питание ещё не добавлено. Нажмите «+ Добавить питание», чтобы составить ежедневное расписание.")+"</p>");
 
   $('feeding-reminders').querySelectorAll('[data-meal-check]').forEach(input => input.onchange = async () => {
     const meal = dailyMealsForPet(p.id).find(item => item.id === input.dataset.mealCheck);
@@ -1008,7 +1128,7 @@ function renderFeeding() {
     }
     const label = input.closest('.meal-reminder');
     label.classList.toggle('is-complete', input.checked);
-    label.querySelector('.meal-status').textContent = input.checked ? 'Выполнено сегодня' : 'Ежедневно';
+    label.querySelector('.meal-status').textContent = input.checked ? uiText("Выполнено сегодня") : uiText("Ежедневно");
     renderMealHistory();
   });
   renderMealHistory();
@@ -1017,8 +1137,8 @@ function renderFeeding() {
 function renderMealHistory() {
   const p = pet();
   const entries = state.feedingLogs.filter(row => isForPet(row, p)).sort((a, b) => mskMoment(b.at) - mskMoment(a.at));
-  const localLabel = at => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(mskMoment(at));
-  $('feeding-history').innerHTML = entries.slice(0, 20).map(row => '<div class="record"><div class="record-title"><b>' + esc(row.food) + '</b><span class="type">' + (row.mealPlanId || row.reminderId ? 'По расписанию' : 'Запись') + '</span></div><time>' + esc(localLabel(row.at)) + ' · ' + esc(row.actor || 'Владелец') + '</time>' + (row.amount ? '<p>Порция: ' + esc(row.amount) + '</p>' : '') + (row.notes ? '<p>' + esc(row.notes) + '</p>' : '') + '</div>').join('') || '<p class="empty">Отметьте кормление галочкой — оно появится в истории.</p>';
+  const localLabel = at => new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(mskMoment(at));
+  $('feeding-history').innerHTML = entries.slice(0, 20).map(row => '<div class="record"><div class="record-title"><b>' + esc(row.food) + '</b><span class="type">' + (row.mealPlanId || row.reminderId ? uiText("По расписанию") : uiText("Запись")) + '</span></div><time>' + esc(localLabel(row.at)) + ' · ' + esc(row.actor || 'Владелец') + '</time>' + (row.amount ? ("<p>"+htmlUiText("Порция:")+" ") + esc(row.amount) + '</p>' : '') + (row.notes ? '<p>' + esc(row.notes) + '</p>' : '') + '</div>').join('') || ("<p class=\"empty\">"+htmlUiText("Отметьте кормление галочкой — оно появится в истории.")+"</p>");
 }
 
 // CARE & EVENTS SECTION
@@ -1051,31 +1171,31 @@ async function eventAction(id, action) {
   }
 
 
-  logActivity(e.petId, (action === 'complete' ? 'Выполнил(а): ' : 'Пропустил(а): ') + e.title, action === 'complete' ? '✓' : '↷');
+  logActivity(e.petId, (action === 'complete' ? (uiText("Выполнил(а):")+" ") : (uiText("Пропустил(а):")+" ")) + e.title, action === 'complete' ? '✓' : '↷');
   lastChange = { kind: 'event', token:actionResult?.undo_token, id, previous, at: Date.now() };
   await syncServerData(true);
   render();
   if (typeof scheduleNextExactPush === 'function') scheduleNextExactPush();
-  notify(action === 'complete' ? 'Выполнено' : 'Пропущено');
+  notify(action === 'complete' ? uiText("Выполнено") : uiText("Пропущено"));
 }
 
 function renderCare() {
   const p = pet();
   if (!p) return;
-  const categories = [['today', 'Сегодня'], ['tomorrow', 'Завтра'], ['week', 'На неделе'], ['overdue', 'Просрочено'], ['all', 'Все']];
+  const categories = [['today', uiText("Сегодня")], ['tomorrow', uiText("Завтра")], ['week', uiText("На неделе")], ['overdue', uiText("Просрочено")], ['all', uiText("Все")]];
   $('care-filters').innerHTML = categories.map(([key, label]) => '<button class="chip ' + (careFilter === key ? 'active' : '') + '" data-care-filter="' + key + '" type="button">' + label + '</button>').join('');
   document.querySelectorAll('[data-care-filter]').forEach(b => b.onclick = () => { careFilter = b.dataset.careFilter; renderCare(); });
 
   const active = state.events.filter(e => isForPet(e, p) && e.status === 'pending' && (careFilter === 'all' || reminderStatus(e) === careFilter || (careFilter === 'week' && ['today', 'tomorrow', 'week'].includes(reminderStatus(e))))).sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
-  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.type || 'Процедура') + (e.intervalDays ? ' · каждые ' + esc(e.intervalDays) + ' дн.' : '') + (e.intervalMonths ? ' · каждые ' + esc(e.intervalMonths) + ' мес.' : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="complete" aria-label="Готово — отметить выполненным: ' + esc(e.title) + '">Готово</button><details class="event-more"><summary aria-label="Ещё: ' + esc(e.title) + '">Ещё</summary><div class="event-more-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="skip" aria-label="Пропустить: ' + esc(e.title) + '">Пропустить</button><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + '" data-do="move" aria-label="Перенести: ' + esc(e.title) + '">Перенести</button></div></details></div></div>').join('') || '<p class="empty">Событий за выбранный период нет.</p>';
+  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(uiText(e.type || 'Процедура')) + (e.intervalDays ? (" · "+uiText("каждые")+" ") + esc(e.intervalDays) + (" "+uiText("дн.")) : '') + (e.intervalMonths ? (" · "+uiText("каждые")+" ") + esc(e.intervalMonths) + (" "+uiText("мес.")) : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + ("\" data-do=\"complete\" aria-label=\""+htmlUiText("Готово — отметить выполненным:")+" ") + esc(e.title) + ("\">"+htmlUiText("Готово")+"</button>"+"<details class=\"event-more\">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(e.title) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<div class=\"event-more-actions\">"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"skip\" aria-label=\""+htmlUiText("Пропустить:")+" ") + esc(e.title) + ("\">"+htmlUiText("Пропустить")+"</button>"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"move\" aria-label=\""+htmlUiText("Перенести:")+" ") + esc(e.title) + ("\">"+htmlUiText("Перенести")+"</button>"+"</div>"+"</details>"+"</div>"+"</div>")).join('') || ("<p class=\"empty\">"+htmlUiText("Событий за выбранный период нет.")+"</p>");
   document.querySelectorAll('[data-care-event]').forEach(b => b.onclick = () => eventAction(b.dataset.careEvent, b.dataset.do));
 
   const history = state.events.filter(e => isForPet(e, p) && e.status !== 'pending').sort((a, b) => mskMoment(b.completedAt || b.at) - mskMoment(a.completedAt || a.at)), expanded = expandedHistoryPet === p.id;
-  $('care-history').innerHTML = (expanded ? history : history.slice(0, 5)).map(e => '<div class="record"><div class="record-title"><b>' + esc(e.title) + '</b><span class="care-tag ' + (e.status === 'completed' ? 'done-tag' : 'overdue-tag') + '">' + (e.status === 'completed' ? 'Выполнено' : 'Пропущено') + '</span></div><p>' + esc(mskLabel(e.at)) + ' МСК · ' + esc(e.doneBy || state.user.name || 'Владелец') + '</p><button class="btn tiny" type="button" data-undo-event="' + esc(e.id) + '">Отменить отметку</button></div>').join('') || '<p class="empty">Истории пока нет.</p>';
+  $('care-history').innerHTML = (expanded ? history : history.slice(0, 5)).map(e => '<div class="record"><div class="record-title"><b>' + esc(e.title) + '</b><span class="care-tag ' + (e.status === 'completed' ? 'done-tag' : 'overdue-tag') + '">' + (e.status === 'completed' ? uiText("Выполнено") : uiText("Пропущено")) + '</span></div><p>' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(e.doneBy || state.user.name || 'Владелец') + '</p><button class="btn tiny" type="button" data-undo-event="' + esc(e.id) + ("\">"+htmlUiText("Отменить отметку")+"</button>"+"</div>")).join('') || ("<p class=\"empty\">"+htmlUiText("Истории пока нет.")+"</p>");
 
   const more = $('care-history-more');
   more.hidden = history.length <= 5;
-  more.textContent = expanded ? 'Свернуть' : 'Показать все (' + history.length + ')';
+  more.textContent = expanded ? uiText("Свернуть") : (uiText("Показать все")+" (") + history.length + ')';
   more.onclick = () => { expandedHistoryPet = expanded ? null : p.id; renderCare(); };
 
   document.querySelectorAll('[data-undo-event]').forEach(b => b.onclick = () => {
@@ -1090,7 +1210,7 @@ function renderCare() {
           body: JSON.stringify({ status: 'pending' })
         }).catch(() => {});
       }
-      logActivity(e.petId, 'Отменил(а) отметку: ' + e.title, '↶');
+      logActivity(e.petId, (uiText("Отменил(а) отметку:")+" ") + e.title, '↶');
       render();
     }
   });
@@ -1114,7 +1234,7 @@ function clinicHttpLink(value) {
 function renderShoppingList() {
   const p = pet();
   const items = state.shopping.filter(item => isForPet(item, p));
-  $('shopping-list').innerHTML = items.map(item => '<div class="shopping-item' + (item.done ? ' is-bought' : '') + '"><span class="shopping-item-name">' + esc(shoppingItemText(item)) + (item.done && item.by ? ' <small style="color:var(--muted);font-weight:400">(' + esc(item.by) + ')</small>' : '') + '</span><button class="btn tiny shopping-bought" type="button" aria-label="Куплено: ' + esc(shoppingItemText(item)) + '" data-shopping="' + esc(item.id) + '" aria-pressed="' + Boolean(item.done) + '">' + (item.done ? '<span aria-hidden="true">✓</span> ' : '') + 'Куплено</button></div>').join('') || '<p class="empty">Список покупок пуст.</p>';
+  $('shopping-list').innerHTML = items.map(item => '<div class="shopping-item' + (item.done ? ' is-bought' : '') + '"><span class="shopping-item-name">' + esc(shoppingItemText(item)) + (item.done && item.by ? ' <small style="color:var(--muted);font-weight:400">(' + esc(item.by) + ')</small>' : '') + ("</span>"+"<button class=\"btn tiny shopping-bought\" type=\"button\" aria-label=\""+htmlUiText("Куплено:")+" "+"") + esc(shoppingItemText(item)) + '" data-shopping="' + esc(item.id) + '" aria-pressed="' + Boolean(item.done) + '">' + (item.done ? '<span aria-hidden="true">✓</span> ' : '') + (htmlUiText("Куплено")+"</button>"+"</div>")).join('') || ("<p class=\"empty\">"+htmlUiText("Список покупок пуст.")+"</p>");
 
   $('shopping-list').querySelectorAll('[data-shopping]').forEach(button => button.onclick = () => {
     const item = state.shopping.find(row => row.id === button.dataset.shopping);
@@ -1124,14 +1244,14 @@ function renderShoppingList() {
     if (item.serverId) {
       apiFetch('/shopping/' + item.serverId + '/toggle', { method: 'PATCH' }).catch(() => {});
     }
-    if (item.done) logActivity(item.petId, 'Купил(а): ' + shoppingItemText(item), '🛍', item.by);
+    if (item.done) logActivity(item.petId, (uiText("Купил(а):")+" ") + shoppingItemText(item), '🛍', item.by);
     render();
   });
 }
 
 function renderClinicContact() {
   const contact = state.contacts[pet().id] || {}, link = clinicHttpLink(contact.clinicUrl);
-  $('vet-contact').innerHTML = '<dl class="clinic-contact"><div><dt>Клиника</dt><dd>' + (link ? '<a class="doc-link" href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(contact.clinicUrl) + '</a>' : (contact.clinicUrl ? esc(contact.clinicUrl) : '<span class="small">Пока не добавлена</span>')) + '</dd></div><div><dt>Лечащий врач</dt><dd>' + (contact.doctor ? esc(contact.doctor) : '<span class="small">Пока не указан</span>') + '</dd></div></dl>';
+  $('vet-contact').innerHTML = ("<dl class=\"clinic-contact\">"+"<div>"+"<dt>"+htmlUiText("Клиника")+"</dt>"+"<dd>") + (link ? '<a class="doc-link" href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(contact.clinicUrl) + '</a>' : (contact.clinicUrl ? esc(contact.clinicUrl) : ("<span class=\"small\">"+htmlUiText("Пока не добавлена")+"</span>"))) + ("</dd>"+"</div>"+"<div>"+"<dt>"+htmlUiText("Лечащий врач")+"</dt>"+"<dd>") + (contact.doctor ? esc(contact.doctor) : ("<span class=\"small\">"+htmlUiText("Пока не указан")+"</span>")) + '</dd></div></dl>';
 }
 
 // DOCUMENTS SECTION
@@ -1140,7 +1260,7 @@ function renderDocuments() {
   const p = pet();
   if (!p) return;
   $('docs-pet-name').textContent = p.name;
-  const categories = [['all', 'Все'], ['passport', 'Паспорт'], ['conclusion', 'Заключения'], ['prescription', 'Назначения'], ['other', 'Другое']];
+  const categories = [['all', uiText("Все")], ['passport', uiText("Паспорт")], ['conclusion', uiText("Заключения")], ['prescription', uiText("Назначения")], ['other', uiText("Другое")]];
   $('document-filters').innerHTML = categories.map(([k, l]) => '<button class="chip ' + (documentFilter === k ? 'active' : '') + '" data-doc-filter="' + k + '" type="button">' + l + '</button>').join('');
   document.querySelectorAll('[data-doc-filter]').forEach(b => b.onclick = () => { documentFilter = b.dataset.docFilter; renderDocuments(); });
 
@@ -1148,13 +1268,13 @@ function renderDocuments() {
   const fromHealth = state.health.filter(h => isForPet(h, p) && h.attachment && (documentFilter === 'all' || documentFilter === 'conclusion')).map(h => ({ id: h.id, title: h.title, type: 'conclusion', date: h.date, file: h.attachment, linked: true }));
 
   const search = $('document-search').value.trim().toLocaleLowerCase('ru');
-  const matches = d => [d.title, d.file?.name, d.date, date(d.date), ({passport:'Паспорт',conclusion:'Заключение',prescription:'Назначение',other:'Другое'})[d.type]].join(' ').toLocaleLowerCase('ru').includes(search);
-  $('document-list').innerHTML = [...standalone, ...fromHealth].filter(matches).sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: 'Паспорт', conclusion: 'Заключение', prescription: 'Назначение', other: 'Другое' })[d.type] || 'Документ') + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + '">Открыть · ' + esc(d.file.name || 'файл') + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '<button class="btn tiny" type="button" data-linked-health="' + esc(d.id) + '">Открыть медицинскую запись</button>' : '<details class="record-actions"><summary aria-label="Ещё: ' + esc(d.title || d.file?.name || 'Документ') + '">Ещё</summary><button class="btn tiny danger" type="button" data-remove-doc="' + esc(d.id) + '">Удалить</button></details>') + '</div>').join('') || '<p class="empty">Документов не найдено. Измените поиск или категорию, либо добавьте документ.</p>';
+  const matches = d => [d.title, d.file?.name, d.date, date(d.date), ({passport:uiText("Паспорт"),conclusion:uiText("Заключение"),prescription:uiText("Назначение"),other:uiText("Другое")})[d.type]].join(' ').toLocaleLowerCase('ru').includes(search);
+  $('document-list').innerHTML = [...standalone, ...fromHealth].filter(matches).sort((a, b) => b.date.localeCompare(a.date)).map(d => '<div class="record"><div class="record-title"><b>' + esc(d.title || d.file?.name) + '</b><span class="type">' + esc(({ passport: uiText("Паспорт"), conclusion: uiText("Заключение"), prescription: uiText("Назначение"), other: uiText("Другое") })[d.type] || uiText("Документ")) + '</span></div><time>' + esc(date(d.date)) + '</time>' + (d.file?.data && d.file.data !== '#' ? '<a class="doc-link" href="' + esc(d.file.data) + '" download="' + esc(d.file.name || 'document') + ("\">"+htmlUiText("Открыть ·")+" ") + esc(d.file.name || uiText("файл")) + '</a>' : '<span class="small" style="display:block;margin:6px 0">' + esc(d.file?.name || '') + '</span>') + (d.linked ? '<button class="btn tiny" type="button" data-linked-health="' + esc(d.id) + ("\">"+htmlUiText("Открыть медицинскую запись")+"</button>") : ("<details class=\"record-actions\">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(d.title || d.file?.name || uiText("Документ")) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<button class=\"btn tiny danger\" type=\"button\" data-remove-doc=\"") + esc(d.id) + ("\">"+htmlUiText("Удалить")+"</button>"+"</details>")) + '</div>').join('') || ("<p class=\"empty\">"+htmlUiText("Документов не найдено. Измените поиск или категорию, либо добавьте документ.")+"</p>");
 
   document.querySelectorAll('[data-linked-health]').forEach(b => b.onclick = () => { healthFilter = 'all'; show('health'); const record = [...$('health-records').children].find(el => el.dataset.healthRecord === b.dataset.linkedHealth); if (record) { record.tabIndex = -1; record.scrollIntoView({block:'center'}); record.focus(); } });
   document.querySelectorAll('[data-remove-doc]').forEach(b => b.onclick = async () => {
     const removed=state.documents.find(x=>x.id===b.dataset.removeDoc); if(!removed?.serverId)return;
-    try {const result=await apiFetch('/documents/'+removed.serverId,{method:'DELETE'});lastChange={kind:'document',token:result.undo_token,at:Date.now()};await syncServerData(true);render();notify('Документ удалён. Можно отменить в профиле в течение 5 минут.');}catch(err){notify(err.message);}
+    try {const result=await apiFetch('/documents/'+removed.serverId,{method:'DELETE'});lastChange={kind:'document',token:result.undo_token,at:Date.now()};await syncServerData(true);render();notify(uiText("Документ удалён. Можно отменить в профиле в течение 5 минут."));}catch(err){notify(err.message);}
   });
 }
 
@@ -1170,10 +1290,10 @@ window.copyOwnerContact = function(contact) {
   if (!contact) return;
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(contact).then(() => {
-      showCopiedToast('Скопировано');
-    }).catch(() => showCopiedToast('Скопировано'));
+      showCopiedToast(uiText("Скопировано"));
+    }).catch(() => showCopiedToast(uiText("Скопировано")));
   } else {
-    showCopiedToast('Скопировано');
+    showCopiedToast(uiText("Скопировано"));
   }
 };
 
@@ -1273,21 +1393,21 @@ function renderTinderCardHTML(candidate, mode = 'discover') {
   const ageText = petProfileAge(candidate.birth_date);
   const reasons = Array.isArray(candidate.match_reasons) && candidate.match_reasons.length
     ? candidate.match_reasons
-    : ['Подходящий вид (' + (candidate.species || 'Питомец') + ')', 'Порода: ' + (candidate.breed || 'Метис')];
+    : [(uiText("Подходящий вид")+" (") + (candidate.species || uiText("Питомец")) + ')', (uiText("Порода:")+" ") + (candidate.breed || 'Метис')];
 
   return '<article class="match-tinder-card" data-candidate-id="' + esc(candidate.id) + '">' +
     '<div class="match-tinder-visual ' + (hasPhoto ? 'has-photo' : '') + '">' +
-      '<span class="match-score-pill">' + esc(candidate.match_score || 92) + '% совпадение</span>' +
+      '<span class="match-score-pill">' + esc(candidate.match_score || 92) + (htmlUiText("% совпадение")+"</span>") +
       (candidate.liked_me || mode === 'incoming'
-        ? '<span class="match-liked-you-pill">' + (candidate.is_mutual ? '♥ Взаимный лайк!' : '♥ Лайкнул(а) вашего питомца!') + '</span>'
+        ? '<span class="match-liked-you-pill">' + (candidate.is_mutual ? ("♥ "+uiText("Взаимный лайк!")) : ("♥ "+uiText("Лайкнул(а) вашего питомца!"))) + '</span>'
         : '') +
-      '<div class="match-tinder-art">' + artHtml + '</div>' + ((candidate.photos || []).length > 1 ? '<div class="candidate-gallery">'+candidate.photos.map((photo,index)=>'<button type="button" data-gallery-photo="'+esc(photo)+'" aria-label="Фото '+(index+1)+'"><img src="'+esc(photo)+'" alt="Фото '+(index+1)+'"></button>').join('')+'</div>' : '') +
+      '<div class="match-tinder-art">' + artHtml + '</div>' + ((candidate.photos || []).length > 1 ? '<div class="candidate-gallery">'+candidate.photos.map((photo,index)=>'<button type="button" data-gallery-photo="'+esc(photo)+("\" aria-label=\""+htmlUiText("Фото")+" ")+(index+1)+'"><img src="'+esc(photo)+("\" alt=\""+htmlUiText("Фото")+" ")+(index+1)+'"></button>').join('')+'</div>' : '') +
     '</div>' +
     '<div class="match-tinder-body">' +
       '<div class="match-tinder-head">' +
         '<div>' +
           '<h2>' + esc(candidate.name) + ', ' + esc(ageText) + '</h2>' +
-          '<p class="small" style="margin:4px 0 0;font-size:14px">' + esc(candidate.species) + ' · <b>' + esc(candidate.breed || 'Метис') + '</b></p>' +
+          '<p class="small" style="margin:4px 0 0;font-size:14px">' + esc(candidate.species) + ' · <b>' + esc(uiText(candidate.breed || 'Метис')) + '</b></p>' +
         '</div>' +
         (candidate.city ? '<span class="match-tinder-city">📍 ' + esc(candidate.city) + '</span>' : '') +
       '</div>' +
@@ -1295,22 +1415,22 @@ function renderTinderCardHTML(candidate, mode = 'discover') {
         reasons.map(r => '<span class="match-reason-chip">✓ ' + esc(r) + '</span>').join('') +
       '</div>' +
       '<dl class="match-facts-grid">' +
-        '<div class="match-fact-item"><dt>Прививки</dt><dd>' + esc(candidate.vaccinated || 'Не указано') + '</dd></div>' +
-        '<div class="match-fact-item"><dt>Пол и стерилизация</dt><dd>' + esc(candidate.sex || 'Неизвестно') + ' · Стерилизация: ' + esc(candidate.sterilized || 'Нет') + '</dd></div>' +
-        '<div class="match-fact-item"><dt>Цель поиска</dt><dd>' + esc(candidate.purpose || 'Совместные прогулки и игры') + '</dd></div>' +
-        '<div class="match-fact-item"><dt>Хозяин</dt><dd>' + esc(candidate.owner_name || 'Владелец') + '</dd></div>' +
+        ("<div class=\"match-fact-item\">"+"<dt>"+htmlUiText("Прививки")+"</dt>"+"<dd>") + esc(candidate.vaccinated || 'Не указано') + '</dd></div>' +
+        ("<div class=\"match-fact-item\">"+"<dt>"+htmlUiText("Пол и стерилизация")+"</dt>"+"<dd>") + esc(uiText(candidate.sex || 'Неизвестно')) + (" · "+uiText("Стерилизация:")+" ") + esc(uiText(candidate.sterilized || 'Нет')) + '</dd></div>' +
+        ("<div class=\"match-fact-item\">"+"<dt>"+htmlUiText("Цель поиска")+"</dt>"+"<dd>") + esc(candidate.purpose || 'Совместные прогулки и игры') + '</dd></div>' +
+        ("<div class=\"match-fact-item\">"+"<dt>"+htmlUiText("Хозяин")+"</dt>"+"<dd>") + esc(candidate.owner_name || 'Владелец') + '</dd></div>' +
       '</dl>' +
       (candidate.bio ? '<p class="match-tinder-bio">' + esc(candidate.bio) + '</p>' : '') +
       '<div class="match-contact-box">' +
         '<div>' +
-          '<strong>Контакты хозяина (' + esc(candidate.owner_name || 'Владелец') + '):</strong>' +
-          '<span>' + esc(candidate.owner_contact || 'Не указаны') + '</span>' +
+          ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(candidate.owner_name || 'Владелец') + '):</strong>' +
+          '<span>' + esc(candidate.owner_contact || uiText("Не указаны")) + '</span>' +
         '</div>' +
-        '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(candidate.owner_contact) + '">Скопировать</button>' +
+        '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(candidate.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
       '</div>' +
       '<div class="match-swipe-actions">' +
-        '<button type="button" class="btn-swipe-skip" data-swipe-action="skip" data-profile-id="' + esc(candidate.id) + '">✕ Пропустить</button>' +
-        '<button type="button" class="btn-swipe-like" data-swipe-action="like" data-profile-id="' + esc(candidate.id) + '">' + (candidate.liked_me || mode === 'incoming' ? '♥ Ответить взаимностью' : '♥ Нравится') + '</button>' +
+        '<button type="button" class="btn-swipe-skip" data-swipe-action="skip" data-profile-id="' + esc(candidate.id) + ("\">"+htmlUiText("✕ Пропустить")+"</button>") +
+        '<button type="button" class="btn-swipe-like" data-swipe-action="like" data-profile-id="' + esc(candidate.id) + '">' + (candidate.liked_me || mode === 'incoming' ? ("♥ "+uiText("Ответить взаимностью")) : ("♥ "+uiText("Нравится"))) + '</button>' +
       '</div>' +
     '</div>' +
   '</article>';
@@ -1351,8 +1471,8 @@ function renderMatch() {
   const m = getActiveMatchData();
   updateMatchNavBadge();
 
-  $('match-pet-subtitle').textContent = 'Активный питомец: ' + p.name + ' (' + p.species + ' · ' + (p.breed || 'Метис') + ')';
-  $('match-form-heading').textContent = 'Анкета питомца: ' + p.name;
+  $('match-pet-subtitle').textContent = (uiText("Активный питомец:")+" ") + p.name + ' (' + p.species + ' · ' + (p.breed || 'Метис') + ')';
+  $('match-form-heading').textContent = (uiText("Анкета питомца:")+" ") + p.name;
 
   const hasVacc = state.health.some(h => isForPet(h, p) && h.type === 'vaccination');
   const myProf = m.myProfile;
@@ -1360,13 +1480,13 @@ function renderMatch() {
     '<div class="match-context-pet">' +
       '<span class="match-context-avatar">' + petAvatar(p) + '</span>' +
       '<div class="match-context-info">' +
-        '<strong>Питомец: ' + esc(p.name) + '</strong>' +
-        '<small>' + esc(p.species) + ' · Порода: ' + esc(myProf?.breed || p.breed || 'Метис') + ' · Возраст: ' + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + ' · Прививки: ' + esc(myProf?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано')) + '</small>' +
+        ("<strong>"+htmlUiText("Питомец:")+" ") + esc(p.name) + '</strong>' +
+        '<small>' + esc(p.species) + (" · "+uiText("Порода:")+" ") + esc(myProf?.breed || p.breed || 'Метис') + (" · "+uiText("Возраст:")+" ") + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + (" · "+uiText("Прививки:")+" ") + esc(myProf?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано')) + '</small>' +
       '</div>' +
     '</div>' +
     '<div class="row">' +
-      '<span class="care-tag ' + (myProf ? 'done-tag' : 'overdue-tag') + '">' + (myProf ? 'Анкета опубликована ✓' : 'Анкета ещё не заполнена') + '</span>' +
-      '<button type="button" class="btn tiny" id="btn-context-edit-profile">' + (myProf ? 'Редактировать анкету' : 'Заполнить анкету') + '</button>' +
+      '<span class="care-tag ' + (myProf ? 'done-tag' : 'overdue-tag') + '">' + (myProf ? uiText("Анкета опубликована ✓") : uiText("Анкета ещё не заполнена")) + '</span>' +
+      '<button type="button" class="btn tiny" id="btn-context-edit-profile">' + (myProf ? uiText("Редактировать анкету") : uiText("Заполнить анкету")) + '</button>' +
     '</div>';
 
   if ($('btn-context-edit-profile')) {
@@ -1403,11 +1523,11 @@ function renderMatch() {
   } else {
     $('match-deck-container').innerHTML =
       '<div class="panel glass" style="text-align:center;padding:36px 24px">' +
-        '<h2>Все доступные анкеты просмотрены</h2>' +
-        '<p class="small" style="max-width:460px;margin:8px auto 18px">Новые анкеты появятся, когда другие владельцы опубликуют подходящие профили. Проверьте видимость и настройки своей анкеты. Вы можете посмотреть пропущенные анкеты заново для питомца <b>' + esc(p.name) + '</b> или перейти в раздел «Вас лайкнули».</p>' +
+        ("<h2>"+htmlUiText("Все доступные анкеты просмотрены")+"</h2>") +
+        ("<p class=\"small\" style=\"max-width:460px;margin:8px auto 18px\">"+htmlUiText("Новые анкеты появятся, когда другие владельцы опубликуют подходящие профили. Проверьте видимость и настройки своей анкеты. Вы можете посмотреть пропущенные анкеты заново для питомца")+" "+"<b>") + esc(p.name) + ("</b>"+" "+htmlUiText("или перейти в раздел «Вас лайкнули».")+"</p>") +
         '<div class="row" style="justify-content:center">' +
-          '<button type="button" class="btn primary" id="btn-reset-match-skips">Смотреть анкеты заново</button>' +
-          '<button type="button" class="btn" id="btn-goto-incoming">Вас лайкнули (' + (m.incomingLikes || []).length + ')</button>' +
+          ("<button type=\"button\" class=\"btn primary\" id=\"btn-reset-match-skips\">"+htmlUiText("Смотреть анкеты заново")+"</button>") +
+          ("<button type=\"button\" class=\"btn\" id=\"btn-goto-incoming\">"+htmlUiText("Вас лайкнули")+" (") + (m.incomingLikes || []).length + ')</button>' +
         '</div>' +
       '</div>';
     if ($('btn-reset-match-skips')) {
@@ -1429,8 +1549,8 @@ function renderMatch() {
     inspectBox.hidden = false;
     inspectBox.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
-        '<strong>Анкета питомца, который лайкнул ' + esc(p.name) + ':</strong>' +
-        '<button type="button" class="btn tiny" id="btn-close-inspect">Свернуть карточку</button>' +
+        ("<strong>"+htmlUiText("Анкета питомца, который лайкнул")+" ") + esc(p.name) + ':</strong>' +
+        ("<button type=\"button\" class=\"btn tiny\" id=\"btn-close-inspect\">"+htmlUiText("Свернуть карточку")+"</button>") +
       '</div>' +
       '<div class="match-deck-layout">' + renderTinderCardHTML(inspectedProfile, 'incoming') + '</div>';
     $('btn-close-inspect').onclick = () => { matchInspectProfileId = null; renderMatch(); };
@@ -1446,33 +1566,33 @@ function renderMatch() {
         const art = hasPhoto ? '<img src="' + esc(item.photo) + '" alt="">' : petArt({ species: item.species }, 'happy');
         return '<article class="match-mini-card">' +
           '<div class="match-mini-visual">' +
-            '<span class="match-score-pill">' + esc(item.match_score || 94) + '% совпадение</span>' +
-            '<span class="match-liked-you-pill">' + (item.is_mutual ? '♥ Взаимный лайк' : '♥ Лайкнул(а) вас') + '</span>' +
+            '<span class="match-score-pill">' + esc(item.match_score || 94) + (htmlUiText("% совпадение")+"</span>") +
+            '<span class="match-liked-you-pill">' + (item.is_mutual ? ("♥ "+uiText("Взаимный лайк")) : ("♥ "+uiText("Лайкнул(а) вас"))) + '</span>' +
             art +
           '</div>' +
           '<div class="match-mini-body">' +
             '<div>' +
               '<h3>' + esc(item.name) + ', ' + esc(petProfileAge(item.birth_date)) + '</h3>' +
-              '<p class="small" style="margin:2px 0 0">' + esc(item.species) + ' · <b>' + esc(item.breed || 'Метис') + '</b>' + (item.city ? ' · ' + esc(item.city) : '') + '</p>' +
+              '<p class="small" style="margin:2px 0 0">' + esc(item.species) + ' · <b>' + esc(uiText(item.breed || 'Метис')) + '</b>' + (item.city ? ' · ' + esc(item.city) : '') + '</p>' +
             '</div>' +
-            '<div class="small"><b>Прививки:</b> ' + esc(item.vaccinated || 'Не указано') + '<br><b>Цель:</b> ' + esc(item.purpose || 'Прогулки и игры') + '</div>' +
+            ("<div class=\"small\">"+"<b>"+htmlUiText("Прививки:")+"</b>"+" ") + esc(item.vaccinated || 'Не указано') + ("<br>"+"<b>"+htmlUiText("Цель:")+"</b>"+" ") + esc(item.purpose || uiText("Прогулки и игры")) + '</div>' +
             (item.bio ? '<p class="small" style="margin:0;color:var(--ink)">' + esc(item.bio) + '</p>' : '') +
             '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
               '<div>' +
-                '<strong>Контакты хозяина (' + esc(item.owner_name || 'Владелец') + '):</strong>' +
-                '<span>' + esc(item.owner_contact || 'Не указаны') + '</span>' +
+                ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(item.owner_name || 'Владелец') + '):</strong>' +
+                '<span>' + esc(item.owner_contact || uiText("Не указаны")) + '</span>' +
               '</div>' +
-              '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + '">Скопировать</button>' +
+              '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
             '</div>' +
             '<div class="match-mini-actions">' +
-              '<button type="button" class="btn tiny" data-inspect-incoming="' + esc(item.id) + '">Открыть анкету</button>' +
-              (!item.is_mutual ? '<button type="button" class="btn tiny primary" data-swipe-action="like" data-profile-id="' + esc(item.id) + '">♥ Ответить лайком</button>' : '') +
-              '<button type="button" class="btn tiny danger" data-swipe-action="skip" data-profile-id="' + esc(item.id) + '">Скрыть</button>' +
+              '<button type="button" class="btn tiny" data-inspect-incoming="' + esc(item.id) + ("\">"+htmlUiText("Открыть анкету")+"</button>") +
+              (!item.is_mutual ? '<button type="button" class="btn tiny primary" data-swipe-action="like" data-profile-id="' + esc(item.id) + ("\">"+"♥ "+htmlUiText("Ответить лайком")+"</button>") : '') +
+              '<button type="button" class="btn tiny danger" data-swipe-action="skip" data-profile-id="' + esc(item.id) + ("\">"+htmlUiText("Скрыть")+"</button>") +
             '</div>' +
           '</div>' +
         '</article>';
       }).join('')
-    : '<p class="empty">Пока никто не лайкнул анкету питомца ' + esc(p.name) + '.</p>';
+    : ("<p class=\"empty\">"+htmlUiText("Пока никто не лайкнул анкету питомца")+" ") + esc(p.name) + '.</p>';
 
   wireMatchCardEvents($('match-incoming-list'));
   $('match-incoming-list').querySelectorAll('[data-inspect-incoming]').forEach(btn => {
@@ -1491,27 +1611,27 @@ function renderMatch() {
         const art = hasPhoto ? '<img src="' + esc(item.photo) + '" alt="">' : petArt({ species: item.species }, 'happy');
         return '<article class="match-mini-card">' +
           '<div class="match-mini-visual">' +
-            '<span class="match-score-pill">' + esc(item.match_score || 92) + '% совпадение</span>' +
-            (item.is_mutual ? '<span class="match-liked-you-pill">♥ Взаимный лайк</span>' : '') +
+            '<span class="match-score-pill">' + esc(item.match_score || 92) + (htmlUiText("% совпадение")+"</span>") +
+            (item.is_mutual ? ("<span class=\"match-liked-you-pill\">"+"♥ "+htmlUiText("Взаимный лайк")+"</span>") : '') +
             art +
           '</div>' +
           '<div class="match-mini-body">' +
             '<div>' +
               '<h3>' + esc(item.name) + ', ' + esc(petProfileAge(item.birth_date)) + '</h3>' +
-              '<p class="small" style="margin:2px 0 0">' + esc(item.species) + ' · <b>' + esc(item.breed || 'Метис') + '</b>' + (item.city ? ' · ' + esc(item.city) : '') + '</p>' +
+              '<p class="small" style="margin:2px 0 0">' + esc(item.species) + ' · <b>' + esc(uiText(item.breed || 'Метис')) + '</b>' + (item.city ? ' · ' + esc(item.city) : '') + '</p>' +
             '</div>' +
-            '<div class="small"><b>Прививки:</b> ' + esc(item.vaccinated || 'Не указано') + ' · <b>Цель:</b> ' + esc(item.purpose || 'Прогулки и игры') + '</div>' +
+            ("<div class=\"small\">"+"<b>"+htmlUiText("Прививки:")+"</b>"+" ") + esc(item.vaccinated || 'Не указано') + (" · "+"<b>"+htmlUiText("Цель:")+"</b>"+" ") + esc(item.purpose || uiText("Прогулки и игры")) + '</div>' +
             '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
               '<div>' +
-                '<strong>Контакты хозяина (' + esc(item.owner_name || 'Владелец') + '):</strong>' +
-                '<span>' + esc(item.owner_contact || 'Не указаны') + '</span>' +
+                ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(item.owner_name || 'Владелец') + '):</strong>' +
+                '<span>' + esc(item.owner_contact || uiText("Не указаны")) + '</span>' +
               '</div>' +
-              '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + '">Скопировать</button>' +
+              '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
             '</div>' +
           '</div>' +
         '</article>';
       }).join('')
-    : '<p class="empty">Вы ещё не отметили ни одной анкеты для питомца ' + esc(p.name) + '.</p>';
+    : ("<p class=\"empty\">"+htmlUiText("Вы ещё не отметили ни одной анкеты для питомца")+" ") + esc(p.name) + '.</p>';
   wireMatchCardEvents($('match-liked-list'));
 
   // 4. Populate Profile Form if pet changed
@@ -1534,7 +1654,7 @@ if ($('match-profile-form')) {
     $('match-profile-feedback').textContent = '';
     const submitBtn = $('btn-save-match-profile');
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Сохраняем в базу…';
+    submitBtn.textContent = uiText("Сохраняем в базу…");
     try {
       await apiFetch('/pets/' + p.serverId + '/match-profile', {
         method: 'POST',
@@ -1556,14 +1676,14 @@ if ($('match-profile-form')) {
         })
       });
       form.dataset.dirty = 'false';
-      logActivity(p.id, 'Опубликовал(а) анкету питомца ' + p.name, '🐾');
+      logActivity(p.id, (uiText("Опубликовал(а) анкету питомца")+" ") + p.name, '🐾');
       await loadMatchDataForActivePet(false);
       setMatchTab('discover');
     } catch (err) {
-      $('match-profile-feedback').textContent = err.message || 'Ошибка сохранения анкеты';
+      $('match-profile-feedback').textContent = err.message || uiText("Ошибка сохранения анкеты");
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Опубликовать анкету';
+      submitBtn.textContent = uiText("Опубликовать анкету");
     }
   };
 }
@@ -1571,23 +1691,34 @@ if ($('match-profile-form')) {
 // PROFILE & JOINT CARE SECTION
 function renderProfile() {
   const u = state.user, p = pet(), set = state.settings;
-  $('person-profile').innerHTML = '<div class="profile-data"><strong>' + esc(u.name || 'Владелец') + '</strong><br>' + esc(u.email || 'Почта не указана') + '<br>Часовой пояс: ' + esc(u.timezone || 'Europe/Moscow') + '</div>';
+  $('person-profile').innerHTML = '<strong>' + esc(authToken && u.id ? u.name : uiText("Ваш аккаунт")) + '</strong>' +
+    '<span>' + esc(authToken && u.id ? u.email : uiText("Войдите, чтобы синхронизировать данные")) + '</span>';
+  $('email-status').hidden = !u.email;
+  $('email-status').textContent = u.emailVerified ? uiText("Электронная почта подтверждена.") : uiText("Подтвердите почту, чтобы восстановить доступ к аккаунту.");
+  document.querySelector('[data-security="verify_email"]').hidden = Boolean(u.emailVerified);
+  $('plan-status').textContent = uiText("Бесплатный тариф");
+  if (u.premium) {
+    const end = u.premiumUntil;
+    $('plan-status').textContent = end ? (uiText("Premium до")+" ") + date(end + 'Z') : uiText("Бессрочный Premium");
+  }
+  $('premium-banner-action').textContent = u.premium ? uiText("Посмотреть периоды подписки") : uiText("Переключиться на премиум-версию");
+  $('email-reminders').checked = Boolean(set.emailEnabled);
 
   if (!p) {
-    $('family-list').innerHTML = '<p class="empty">Сначала добавьте питомца или подключитесь по коду.</p>';
-    $('avatar-preview').innerHTML = '<p class="empty">Сначала добавьте питомца.</p>';
+    $('family-list').innerHTML = ("<p class=\"empty\">"+htmlUiText("Сначала добавьте питомца или подключитесь по коду.")+"</p>");
+    $('avatar-preview').innerHTML = ("<p class=\"empty\">"+htmlUiText("Сначала добавьте питомца.")+"</p>");
   } else {
     const coOwners = Array.isArray(p.coOwners) ? p.coOwners : [];
     const localMembers = state.members.filter(m => isForPet(m, p));
     const shareCodeHtml = p.shareCode
-      ? '<div class="record" style="padding-top:4px"><div class="small" style="margin-bottom:6px">Код совместного ухода за <b>' + esc(p.name) + '</b> (передайте члену семьи):</div><div class="join-input-group"><input type="text" aria-label="Код совместного ухода" readonly value="' + esc(p.shareCode) + '"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + '">Скопировать код</button></div></div>'
+      ? ("<div class=\"record\" style=\"padding-top:4px\">"+"<div class=\"small\" style=\"margin-bottom:6px\">"+htmlUiText("Код совместного ухода за")+" "+"<b>") + esc(p.name) + ("</b>"+" ("+htmlUiText("передайте члену семьи):")+"</div>"+"<div class=\"join-input-group\">"+"<input type=\"text\" aria-label=\""+htmlUiText("Код совместного ухода")+"\" readonly value=\"") + esc(p.shareCode) + '"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + ("\">"+htmlUiText("Скопировать код")+"</button>"+"</div>"+"</div>")
       : '';
-    const joinQuickHtml = '<div class="record"><div class="small" style="margin-bottom:6px">Подключиться к другому питомцу по коду:</div><div class="join-input-group"><input type="text" id="profile-join-code" placeholder="Например: PET-REXX-3F88-P9D1"><button type="button" class="btn tiny primary" id="profile-join-btn">Подключиться</button></div></div>';
+    const joinQuickHtml = ("<div class=\"record\">"+"<div class=\"small\" style=\"margin-bottom:6px\">"+htmlUiText("Подключиться к другому питомцу по коду:")+"</div>"+"<div class=\"join-input-group\">"+"<input type=\"text\" id=\"profile-join-code\" placeholder=\""+htmlUiText("Например: PET-ABCD-EFGH-JKLM")+"\">"+"<button type=\"button\" class=\"btn tiny primary\" id=\"profile-join-btn\">"+htmlUiText("Подключиться")+"</button>"+"</div>"+"</div>");
 
     const membersHtml = [
-      ...coOwners.map(c => '<div class="record"><div class="record-title"><b>' + esc(c.name) + '</b><span class="type">Со-владелец (Cloud)</span></div><p>' + esc(c.email || 'Подключён по коду совместного ухода') + '</p></div>'),
-      ...localMembers.map(m => '<div class="record"><div class="record-title"><b>' + esc(m.name) + '</b><span class="type">' + esc(m.role) + '</span></div><p>' + esc(m.until ? 'Доступ до ' + date(m.until) : 'Без срока') + '</p><button class="btn tiny danger" type="button" data-member-remove="' + esc(m.id) + '">Убрать</button></div>')
-    ].join('') || '<p class="small" style="margin-top:10px">Дополнительных участников пока нет.</p>';
+      ...coOwners.map(c => '<div class="record"><div class="record-title"><b>' + esc(c.name) + ("</b>"+"<span class=\"type\">"+htmlUiText("Со-владелец (Cloud)")+"</span>"+"</div>"+"<p>") + esc(c.email || uiText("Подключён по коду совместного ухода")) + '</p></div>'),
+      ...localMembers.map(m => '<div class="record"><div class="record-title"><b>' + esc(m.name) + '</b><span class="type">' + esc(m.role) + '</span></div><p>' + esc(m.until ? (uiText("Доступ до")+" ") + date(m.until) : uiText("Без срока")) + '</p><button class="btn tiny danger" type="button" data-member-remove="' + esc(m.id) + ("\">"+htmlUiText("Убрать")+"</button>"+"</div>"))
+    ].join('') || ("<p class=\"small\" style=\"margin-top:10px\">"+htmlUiText("Дополнительных участников пока нет.")+"</p>");
 
     $('family-list').innerHTML = shareCodeHtml + joinQuickHtml + membersHtml;
 
@@ -1595,7 +1726,7 @@ function renderProfile() {
     if (joinBtn) {
       joinBtn.onclick = async () => {
         const code = $('profile-join-code')?.value.trim().toUpperCase();
-        if (!code) { notify('Введите код совместного ухода'); return; }
+        if (!code) { notify(uiText("Введите код совместного ухода")); return; }
         try {
           const res = await apiFetch('/pets/join-by-code', {
             method: 'POST',
@@ -1605,10 +1736,10 @@ function renderProfile() {
             await syncServerData(true);
             state.selected = String(res.id);
             render();
-            notify('Питомец ' + (res.name || '') + ' подключён к вашему аккаунту!');
+            notify((uiText("Питомец")+" ") + (res.name || '') + (" "+uiText("подключён к вашему аккаунту!")));
           }
         } catch (err) {
-          notify(err.message || 'Ошибка подключения по коду');
+          notify(err.message || uiText("Ошибка подключения по коду"));
         }
       };
     }
@@ -1620,21 +1751,21 @@ function renderProfile() {
 
     const bg = state.avatar[p.id]?.background || 'lavender', accessory = state.avatar[p.id]?.accessory || 'none', image = p.photo ? '<img src="' + esc(p.photo) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:20px">' : petArt(p, 'neutral');
     const birthday = p.birthDate?.slice(5) === mskDay().slice(5);
-    $('avatar-preview').innerHTML = '<div class="row"><div class="avatar" style="background:' + ({ lavender: '#dcd8fb', peach: '#f6dfdc', mint: '#d5eee6' })[bg] + ';width:88px;height:88px;position:relative">' + image + (accessory === 'bow' ? '<span style="position:absolute;top:0;right:4px">🎀</span>' : accessory === 'crown' ? '<span style="position:absolute;top:0;right:4px">👑</span>' : '') + '</div><div><b>' + esc(p.name) + '</b><p class="small">' + (birthday ? 'С днём рождения!' : 'Фон и аксессуар синхронизированы') + '</p></div></div>';
+    $('avatar-preview').innerHTML = '<div class="row"><div class="avatar" style="background:' + ({ lavender: '#dcd8fb', peach: '#f6dfdc', mint: '#d5eee6' })[bg] + ';width:88px;height:88px;position:relative">' + image + (accessory === 'bow' ? '<span style="position:absolute;top:0;right:4px">🎀</span>' : accessory === 'crown' ? '<span style="position:absolute;top:0;right:4px">👑</span>' : '') + '</div><div><b>' + esc(p.name) + '</b><p class="small">' + (birthday ? uiText("С днём рождения!") : uiText("Фон и аксессуар синхронизированы")) + '</p></div></div>';
   }
 
   const pushActive = Boolean(set.pushEnabled);
   $('notification-settings').innerHTML =
     '<div class="profile-data">' +
-      'Статус: <strong style="color:' + (pushActive ? 'var(--accent-dark)' : 'var(--muted)') + '">' + (pushActive ? 'Включены 🔔' : 'Выключены') + '</strong><br>' +
-      'Часовой пояс: <strong>Europe/Moscow</strong><br>' +
-      'Тихие часы: ' + (set.quietEnabled ? esc(set.quietStart) + '–' + esc(set.quietEnd) : 'выключены') + '<br>' +
-      'Типы: ' + esc(set.types.join(', ') || 'не выбраны') +
+      (htmlUiText("Статус:")+" "+"<strong style=\"color:") + (pushActive ? 'var(--accent-dark)' : 'var(--muted)') + '">' + (pushActive ? uiText("Включены 🔔") : uiText("Выключены")) + '</strong><br>' +
+      (htmlUiText("Часовой пояс:")+" "+"<strong>"+"Europe/Moscow"+"</strong>"+"<br>") +
+      (uiText("Тихие часы:")+" ") + (set.quietEnabled ? esc(set.quietStart) + '–' + esc(set.quietEnd) : uiText("выключены")) + '<br>' +
+      (uiText("Типы:")+" ") + esc(set.types.join(', ') || uiText("не выбраны")) +
     '</div>';
 
   updatePushStatusUI();
 
-  $('undo-area').innerHTML = lastChange && Date.now() - lastChange.at < 300000 ? '<div class="panel glass"><h2>Последнее действие</h2><button class="btn tiny" id="undo-last" type="button">Отменить ' + (lastChange.kind === 'document' ? 'удаление документа' : 'отметку события') + '</button></div>' : '';
+  $('undo-area').innerHTML = lastChange && Date.now() - lastChange.at < 300000 ? ("<div class=\"panel glass\">"+"<h2>"+htmlUiText("Последнее действие")+"</h2>"+"<button class=\"btn tiny\" id=\"undo-last\" type=\"button\">"+htmlUiText("Отменить")+" ") + (lastChange.kind === 'document' ? uiText("удаление документа") : uiText("отметку события")) + '</button></div>' : '';
   if ($('undo-last')) $('undo-last').onclick = async () => {
     try {
     const c = lastChange;
@@ -1647,7 +1778,7 @@ function renderProfile() {
     lastChange = null;
     render();
     await syncServerData(true);
-    notify('Действие отменено');
+    notify(uiText("Действие отменено"));
     } catch(err){notify(err.message);}
   };
 }
@@ -1658,28 +1789,28 @@ function renderProfile() {
 function renderDetails() {
   const p = pet();
   const facts = [
-    ['Вид', p.species],
-    ['Порода', p.breed],
-    ['Дата рождения', p.birthDate ? date(p.birthDate) : ''],
-    ['Возраст', petProfileAge(p.birthDate)],
-    ['Пол', p.sex],
-    ['Стерилизация', p.sterilized],
+    [uiText("Вид"), p.species],
+    [uiText("Порода"), p.breed],
+    [uiText("Дата рождения"), p.birthDate ? date(p.birthDate) : ''],
+    [uiText("Возраст"), petProfileAge(p.birthDate)],
+    [uiText("Пол"), uiText(p.sex || 'Не указано')],
+    [uiText("Стерилизация"), uiText(p.sterilized || 'Не указано')],
     ['Особенности', p.notes],
     ['Важные отметки', p.marks],
     ['Номер чипа', p.chip]
   ];
   const shareHtml = p.shareCode
-    ? '<div class="profile-fact-wide"><dt>Код совместного ухода</dt><dd><button type="button" class="pet-card-code" data-copy-pet-code="' + esc(p.shareCode) + '"><code>' + esc(p.shareCode) + '</code><span class="copy-label">скопировать код</span></button></dd></div>'
+    ? ("<div class=\"profile-fact-wide\">"+"<dt>"+htmlUiText("Код совместного ухода")+"</dt>"+"<dd>"+"<button type=\"button\" class=\"pet-card-code\" data-copy-pet-code=\"") + esc(p.shareCode) + '"><code>' + esc(p.shareCode) + ("</code>"+"<span class=\"copy-label\">"+htmlUiText("скопировать код")+"</span>"+"</button>"+"</dd>"+"</div>")
     : '';
   $('editor-fields').innerHTML =
-    '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(p.species) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? ' · Совместный уход' : '') + '</p></div></div>' +
+    '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(p.species) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</p></div></div>' +
     '<dl class="pet-profile-facts">' +
-      facts.map(([label, value]) => '<div' + (['Особенности', 'Важные отметки', 'Номер чипа'].includes(label) ? ' class="profile-fact-wide"' : '') + '><dt>' + esc(label) + '</dt><dd>' + esc(value || 'Не указано') + '</dd></div>').join('') +
+      facts.map(([label, value]) => '<div' + (['Особенности', 'Важные отметки', 'Номер чипа'].includes(label) ? ' class="profile-fact-wide"' : '') + '><dt>' + esc(uiText(label)) + '</dt><dd>' + esc(value || uiText('Не указано')) + '</dd></div>').join('') +
       shareHtml +
     '</dl>' +
-    '<div class="row"><button class="btn" type="button" id="edit-pet">Изменить карточку</button></div>' +
-    '<div class="pet-card-shortcuts field full"><p class="small">Перейти к записям питомца</p><div class="row">' +
-      [['health', 'Здоровье'], ['nutrition', 'Питание'], ['care', 'Уход и события'], ['documents', 'Документы'], ['match', 'Поиск друзей']].filter(([key]) => key !== 'match' || FRIENDS_ENABLED).map(([key, label]) => '<button type="button" class="btn" data-card-page="' + key + '">' + label + '</button>').join('') +
+    ("<div class=\"row\">"+"<button class=\"btn\" type=\"button\" id=\"edit-pet\">"+htmlUiText("Изменить карточку")+"</button>"+"</div>") +
+    ("<div class=\"pet-card-shortcuts field full\">"+"<p class=\"small\">"+htmlUiText("Перейти к записям питомца")+"</p>"+"<div class=\"row\">") +
+      [['health', uiText("Здоровье")], ['nutrition', uiText("Питание")], ['care', uiText("Уход и события")], ['documents', uiText("Документы")], ['match', uiText("Поиск друзей")]].filter(([key]) => key !== 'match' || FRIENDS_ENABLED).map(([key, label]) => '<button type="button" class="btn" data-card-page="' + key + '">' + label + '</button>').join('') +
     '</div></div>';
 
   $('edit-pet').onclick = () => { $('editor').close(); openModal('pet-edit'); };
@@ -1693,23 +1824,23 @@ function decorateEditor(type) {
   if (type === 'nutrition' || type === 'pet-details') return;
   const root = $('editor-fields');
   const groups = {
-    pet: [['О питомце',['name','species','breed','birthDate','sex','sterilized']],['Особенности и фото',['marks','notes','chip','photo']]],
-    'pet-edit': [['О питомце',['name','species','breed','birthDate','sex','sterilized']],['Особенности и фото',['marks','notes','chip','photo']]],
-    health: [['Запись',['petId','type','title','date']],['Подробности приёма',['product','clinic','doctor','result','notes','attachment']],['Следующая процедура',['nextDate','repeatDays','nextTime']]],
-    prescription: [['Назначение врача',['name','dose']],['Курс и приём',['startDate','duration','times','status']]],
-    reminder: [['Событие',['petId','title','type']],['Когда напомнить',['at','frequency','interval']]],
-    'meal-plan': [['Рацион',['food']],['Расписание',['time','endTime','notes']]],
-    document: [['О документе',['title','type','date']],['Файл',['file']]],
-    'feeding-log': [['Кормление',['food','amount','at']],['Заметка',['notes']]],
-    profile: [['Личные данные',['name','email']],['Время',['timezone']]],
-    member: [['Совместный уход',['email','role','until']]],
-    avatar: [['Оформление',['background','accessory','photo']]],
-    settings: [['Тихие часы',['quietEnabled','quietStart','quietEnd']]],
-    shopping: [['Покупка',['title','quantity']]],
-    weight: [['Измерение',['date','kg']]],
-    move: [['Новое время',['at']]],
-    activity: [['Действие',['action','actor','at']]],
-    'vet-contact': [['Контакты клиники',['clinicUrl','doctor']]]
+    pet: [[uiText("О питомце"),['name','species','breed','birthDate','sex','sterilized']],[uiText("Особенности и фото"),['marks','notes','chip','photo']]],
+    'pet-edit': [[uiText("О питомце"),['name','species','breed','birthDate','sex','sterilized']],[uiText("Особенности и фото"),['marks','notes','chip','photo']]],
+    health: [[uiText("Запись"),['petId','type','title','date']],[uiText("Подробности приёма"),['product','clinic','doctor','result','notes','attachment']],[uiText("Следующая процедура"),['nextDate','repeatDays','nextTime']]],
+    prescription: [[uiText("Назначение врача"),['name','dose']],[uiText("Курс и приём"),['startDate','duration','times','status']]],
+    reminder: [[uiText("Событие"),['petId','title','type']],[uiText("Когда напомнить"),['at','frequency','interval']]],
+    'meal-plan': [[uiText("Рацион"),['food']],[uiText("Расписание"),['time','endTime','notes']]],
+    document: [[uiText("О документе"),['title','type','date']],[uiText("Файл"),['file']]],
+    'feeding-log': [['Кормление',['food','amount','at']],[uiText("Заметка"),['notes']]],
+    profile: [[uiText("Личные данные"),['name','email']],[uiText("Время"),['timezone']]],
+    member: [[uiText('Совместный уход'),['email','role','until']]],
+    avatar: [[uiText("Оформление"),['background','accessory','photo']]],
+    settings: [[uiText("Тихие часы"),['quietEnabled','quietStart','quietEnd']]],
+    shopping: [[uiText("Покупка"),['title','quantity']]],
+    weight: [[uiText("Измерение"),['date','kg']]],
+    move: [[uiText("Новое время"),['at']]],
+    activity: [[uiText("Действие"),['action','actor','at']]],
+    'vet-contact': [[uiText("Контакты клиники"),['clinicUrl','doctor']]]
   }[type] || [];
   for (const [index, [title, names]] of groups.entries()) {
     const fields = names.map(name => root.querySelector('[name="' + name + '"]')?.closest('.field')).filter(Boolean);
@@ -1732,7 +1863,7 @@ $('editor').addEventListener('close', () => { editorFilePickers.forEach(picker =
 
 function openModal(type, id) {
   $('editor').dataset.mode = type;
-  $('editor-form').querySelector('[type=submit]').textContent = type === 'nutrition' ? 'Сохранить корм' : 'Сохранить';
+  $('editor-form').querySelector('[type=submit]').textContent = type === 'nutrition' ? uiText("Сохранить корм") : uiText("Сохранить");
   editorDirty = false;
   clearEditorError();
   closePetAccounts();
@@ -1743,87 +1874,75 @@ function openModal(type, id) {
   let title = '', html = '';
 
   if (type === 'pet-details') {
-    title = 'Карточка питомца';
+    title = uiText("Карточка питомца");
     renderDetails();
   } else if (type === 'pet' || type === 'pet-edit') {
-    title = type === 'pet' ? 'Новый питомец' : 'Карточка питомца';
+    title = type === 'pet' ? uiText("Новый питомец") : uiText("Карточка питомца");
     const joinBottomBlock = type === 'pet'
-      ? '<div class="join-divider">или подключитесь к существующему питомцу</div>' +
+      ? ("<div class=\"join-divider\">"+htmlUiText("или подключитесь к существующему питомцу")+"</div>") +
         '<div class="join-pet-bottom-card" id="join-pet-bottom-card">' +
-          '<strong>Совместный уход по коду</strong>' +
-          '<p>Если другой член семьи уже создал карточку питомца, введите его код доступа (например, PET-REXX-3F88-P9D1):</p>' +
+          ("<strong>"+htmlUiText("Совместный уход по коду")+"</strong>") +
+          ("<p>"+htmlUiText("Если другой член семьи уже создал карточку питомца, введите его код доступа (например, PET-ABCD-EFGH-JKLM):")+"</p>") +
           '<div class="join-input-group">' +
             '<input type="text" id="pet-invite-code" name="inviteCode" placeholder="PET-XXXX-XXXX-XXXX-XXXX" autocomplete="off">' +
-            '<button type="button" class="btn primary" id="btn-do-join">Подключиться</button>' +
+            ("<button type=\"button\" class=\"btn primary\" id=\"btn-do-join\">"+htmlUiText("Подключиться")+"</button>") +
           '</div>' +
         '</div>'
       : '';
-    html = field('name', 'Имя', 'text', { required: true, placeholder: 'Например: Барсик' }) +
-      field('species', 'Вид', 'text', { required: true, placeholder: 'Кошка, собака…' }) +
-      field('breed', 'Порода', 'text', { placeholder: 'Порода или метис' }) +
-      field('birthDate', 'Дата рождения', 'date') +
-      field('sex', 'Пол', 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
-      field('sterilized', 'Стерилизация', 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
-      field('marks', 'Важные отметки', 'textarea', { full: true, placeholder: 'Аллергии, хронические состояния' }) +
+    html = field('name', uiText("Имя"), 'text', { required: true, placeholder: uiText("Например: Барсик") }) +
+      field('species', uiText("Вид"), 'text', { required: true, placeholder: uiText("Кошка, собака…") }) +
+      field('breed', uiText("Порода"), 'text', { placeholder: uiText("Порода или метис") }) +
+      field('birthDate', uiText("Дата рождения"), 'date') +
+      field('sex', uiText("Пол"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
+      field('sterilized', uiText("Стерилизация"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
+      field('marks', 'Важные отметки', 'textarea', { full: true, placeholder: uiText("Аллергии, хронические состояния") }) +
       field('notes', 'Особенности', 'textarea', { full: true }) +
       field('chip', 'Номер чипа') +
-      filePickerMarkup('pet-photo-upload', 'photo', 'photo', 'Фото питомца') +
+      filePickerMarkup('pet-photo-upload', 'photo', 'photo', uiText("Фото питомца")) +
       joinBottomBlock;
   } else if (type === 'move') {
-    title = 'Перенести событие';
-    html = field('at', 'Новая дата и время МСК', 'datetime-local', { required: true });
+    title = uiText("Перенести событие");
+    html = field('at', uiText("Новая дата и время МСК"), 'datetime-local', { required: true });
   } else if (type === 'activity') {
-    title = 'Записать действие';
-    html = field('action', 'Что сделали?', 'text', { required: true, placeholder: 'Например, погулял с питомцем' }) +
-      field('actor', 'Кто выполнил?', 'text', { required: true, placeholder: 'Имя' }) +
-      field('at', 'Когда', 'datetime-local', { required: true });
+    title = uiText("Записать действие");
+    html = field('action', uiText("Что сделали?"), 'text', { required: true, placeholder: uiText("Например, погулял с питомцем") }) +
+      field('actor', uiText("Кто выполнил?"), 'text', { required: true, placeholder: uiText("Имя") }) +
+      field('at', uiText("Когда"), 'datetime-local', { required: true });
   } else if (type === 'health') {
-    title = 'Запись о здоровье';
-    html = field('petId', 'Питомец', 'select', { options: state.pets.map(x => [x.id, x.name]) }) +
-      field('type', 'Тип записи', 'select', { options: Object.entries(healthLabel) }) +
-      field('title', 'Название или причина', 'text', { required: true }) +
+    title = uiText("Запись о здоровье");
+    html = field('petId', uiText("Питомец"), 'select', { options: state.pets.map(x => [x.id, x.name]) }) +
+      field('type', uiText("Тип записи"), 'select', { options: Object.entries(healthLabel) }) +
+      field('title', uiText("Название или причина"), 'text', { required: true }) +
       f.date('date') +
-      field('product', 'Вакцина или средство') +
-      field('clinic', 'Клиника') +
-      field('doctor', 'Врач') +
-      field('result', 'Результат') +
-      field('nextDate', 'Следующая процедура', 'date') +
-      field('repeatDays', 'Или повтор через N дней', 'number', { min: '1', step: '1' }) +
-      field('nextTime', 'Время напоминания МСК', 'time') +
+      field('product', uiText("Вакцина или средство")) +
+      field('clinic', uiText("Клиника")) +
+      field('doctor', uiText("Врач")) +
+      field('result', uiText("Результат")) +
+      field('nextDate', uiText("Следующая процедура"), 'date') +
+      field('repeatDays', uiText("Или повтор через N дней"), 'number', { min: '1', step: '1' }) +
+      field('nextTime', uiText("Время напоминания МСК"), 'time') +
       f.notes() +
-      filePickerMarkup('health-attachment', 'attachment', 'document', 'Фото или PDF к записи');
+      filePickerMarkup('health-attachment', 'attachment', 'document', uiText("Фото или PDF к записи"));
   } else if (type === 'prescription') {
-    title = 'Назначение препарата';
+    title = uiText("Назначение препарата");
     html = field('name', 'Препарат', 'text', { required: true }) +
-      field('dose', 'Дозировка, как указано врачом', 'text', { required: true }) +
-      field('startDate', 'Начало курса', 'date', { required: true }) +
-      field('duration', 'Длительность курса', 'text', { required: true, placeholder: 'Например, 7 дней' }) +
-      field('times', 'Время приёма МСК', 'text', { required: true, placeholder: '09:00, 21:00' }) +
-      field('status', 'Статус', 'select', { options: [['Активно', 'Активно'], ['Завершено', 'Завершено'], ['Остановлено', 'Остановлено']] });
+      field('dose', uiText("Дозировка, как указано врачом"), 'text', { required: true }) +
+      field('startDate', uiText("Начало курса"), 'date', { required: true }) +
+      field('duration', uiText("Длительность курса"), 'text', { required: true, placeholder: uiText("Например, 7 дней") }) +
+      field('times', uiText("Время приёма МСК"), 'text', { required: true, placeholder: '09:00, 21:00' }) +
+      field('status', uiText("Статус"), 'select', { options: [['Активно', 'Активно'], [uiText("Завершено"), uiText("Завершено")], [uiText("Остановлено"), uiText("Остановлено")]] });
   } else if (type === 'weight') {
-    title = 'Новое измерение';
-    html = f.date('date') + field('kg', 'Вес, кг', 'number', { required: true, min: '.1', max: '150', step: '.1' });
+    title = uiText("Новое измерение");
+    html = f.date('date') + field('kg', uiText("Вес, кг"), 'number', { required: true, min: '.1', max: '150', step: '.1' });
   } else if (type === 'nutrition') {
-    title = 'Добавить корм';
+    title = uiText("Добавить корм");
     const choice = (name, legend, options, selected = 'unknown') => `<fieldset class="food-choice"><legend>${legend}</legend><div class="food-options">${options.map(([value, text]) => `<label><input type="radio" name="${name}" value="${value}" ${value === selected ? 'checked' : ''}><span>${text}</span></label>`).join('')}</div></fieldset>`;
-    html = `<div class="food-form-intro full"><span class="food-form-icon" aria-hidden="true"><svg><use href="#food"/></svg></span><div><strong>Что пробует питомец?</strong><p>Сохраните корм и свои наблюдения. Оценку можно пока не давать.</p></div></div>
-      <section class="food-form-section full" aria-labelledby="food-product-heading"><h3 id="food-product-heading">О корме</h3><div class="form-grid">
-      ${field('food', 'Название корма *', 'text', {required:true, full:true, placeholder:'Например, индейка с рисом'})}
-      ${field('brand', 'Бренд', 'text', {full:true, placeholder:'Например, название с упаковки'})}
-      </div>${choice('kind', 'Тип питания', Object.entries(kindLabel), 'food')}</section>
-      <section class="food-form-section full" aria-labelledby="food-observation-heading"><h3 id="food-observation-heading">Как отреагировал питомец?</h3>
-      ${choice('liked', 'Ест с удовольствием?', [['yes','Да'],['no','Нет'],['unknown','Пока не знаю']])}
-      ${choice('tolerated', 'Хорошо переносит?', [['yes','Да'],['no','Нет'],['unknown','Наблюдаю']])}
-      ${field('reactions', 'Что заметили?', 'textarea', {full:true,placeholder:'Например, отказался есть или появился зуд. Можно оставить пустым.'})}
-      <p class="food-form-hint">Это ваши наблюдения, а не медицинское заключение.</p></section>
-      <details class="food-form-details full"><summary>Дата, цена и заметки <span>Необязательно</span></summary><div class="form-grid">
-      ${f.date('date')}${field('price', 'Цена упаковки, ₽', 'number', {min:'0',step:'.01',placeholder:'Не указана'})}${f.notes()}
-      </div></details>`;
+    html = `${"<div class=\"food-form-intro full\">"+"<span class=\"food-form-icon\" aria-hidden=\"true\">"+"<svg>"+"<use href=\"#food\"/>"+"</svg>"+"</span>"+"<div>"+"<strong>"+htmlUiText("Что пробует питомец?")+"</strong>"+"<p>"+htmlUiText("Сохраните корм и свои наблюдения. Оценку можно пока не давать.")+"</p>"+"</div>"+"</div>"+"\n      "+"<section class=\"food-form-section full\" aria-labelledby=\"food-product-heading\">"+"<h3 id=\"food-product-heading\">"+htmlUiText("О корме")+"</h3>"+"<div class=\"form-grid\">"+"\n      "}${field('food', uiText("Название корма *"), 'text', {required:true, full:true, placeholder:uiText("Например, индейка с рисом")})}${"\n      "}${field('brand', uiText("Бренд"), 'text', {full:true, placeholder:uiText("Например, название с упаковки")})}${"\n      "+"</div>"}${choice('kind', uiText("Тип питания"), Object.entries(kindLabel), 'food')}${"</section>"+"\n      "+"<section class=\"food-form-section full\" aria-labelledby=\"food-observation-heading\">"+"<h3 id=\"food-observation-heading\">"+htmlUiText("Как отреагировал питомец?")+"</h3>"+"\n      "}${choice('liked', uiText("Ест с удовольствием?"), [['yes','Да'],['no','Нет'],['unknown',uiText("Пока не знаю")]])}${"\n      "}${choice('tolerated', uiText("Хорошо переносит?"), [['yes','Да'],['no','Нет'],['unknown',uiText("Наблюдаю")]])}${"\n      "}${field('reactions', uiText("Что заметили?"), 'textarea', {full:true,placeholder:uiText("Например, отказался есть или появился зуд. Можно оставить пустым.")})}${"\n      "+"<p class=\"food-form-hint\">"+htmlUiText("Это ваши наблюдения, а не медицинское заключение.")+"</p>"+"</section>"+"\n      "+"<details class=\"food-form-details full\">"+"<summary>"+htmlUiText("Дата, цена и заметки")+" "+"<span>"+htmlUiText("Необязательно")+"</span>"+"</summary>"+"<div class=\"form-grid\">"+"\n      "}${f.date('date')}${field('price', uiText("Цена упаковки, ₽"), 'number', {min:'0',step:'.01',placeholder:uiText("Не указана")})}${f.notes()}${"\n      "+"</div>"+"</details>"}`;
   }
 
   if (type !== 'pet-details') { $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers(); }
   $('editor-title').textContent = title;
-  $('editor-context').textContent = type === 'pet' ? 'Создайте карточку питомца или подключитесь по коду совместного доступа.' : ('Кабинет: ' + (p?.name || 'Питомец'));
+  $('editor-context').textContent = type === 'pet' ? uiText("Создайте карточку питомца или подключитесь по коду совместного доступа.") : ((uiText("Кабинет:")+" ") + (p?.name || uiText("Питомец")));
 
   const form = $('editor-form');
   form.querySelector('.form-actions').style.display = type === 'pet-details' ? 'none' : 'flex';
@@ -1849,7 +1968,7 @@ function openModal(type, id) {
       btnJoin.onclick = async () => {
         const codeInput = $('pet-invite-code');
         const code = codeInput ? codeInput.value.trim().toUpperCase() : '';
-        if (!code) { notify('Введите код совместного ухода'); return; }
+        if (!code) { notify(uiText("Введите код совместного ухода")); return; }
         try {
           const res = await apiFetch('/pets/join-by-code', {
             method: 'POST',
@@ -1860,10 +1979,10 @@ function openModal(type, id) {
             await syncServerData(true);
             state.selected = String(res.id);
             show('health');
-            notify('Питомец ' + (res.name || '') + ' подключён по коду совместного ухода');
+            notify((uiText("Питомец")+" ") + (res.name || '') + (" "+uiText("подключён по коду совместного ухода")));
           }
         } catch (err) {
-          notify(err.message || 'Ошибка подключения по коду');
+          notify(err.message || uiText("Ошибка подключения по коду"));
         }
       };
     }
@@ -1874,13 +1993,13 @@ function openModal(type, id) {
 
 function openExtraModal(type) {
   $('editor').dataset.mode = type;
-  $('editor-form').querySelector('[type=submit]').textContent = 'Сохранить';
+  $('editor-form').querySelector('[type=submit]').textContent = uiText("Сохранить");
   editorDirty = false;
   clearEditorError();
   closePetAccounts();
   const p = pet();
   if (!p && !['profile', 'settings', 'member'].includes(type)) {
-    notify('Сначала добавьте питомца.');
+    notify(uiText("Сначала добавьте питомца."));
     return;
   }
   modalType = 'extra-' + type;
@@ -1889,22 +2008,22 @@ function openExtraModal(type) {
   let html = '', title = '';
 
   if (type === 'meal-plan') {
-    title = 'Добавить питание';
-    html = field('food', 'Что даёте питомцу?', 'text', { required: true, full: true, placeholder: 'Например, индейка с рисом, 60 г' }) +
-      '<fieldset class="meal-schedule-field"><legend>Когда кормить</legend><div class="meal-schedule-options"><label class="meal-schedule-option"><input type="radio" name="schedule" value="exact" checked><span>Точное время</span></label><label class="meal-schedule-option"><input type="radio" name="schedule" value="range"><span>Интервал времени</span></label></div></fieldset>' +
-      field('time', 'Время кормления', 'time', { required: true, full: true }) +
-      field('endTime', 'До какого времени', 'time') +
-      field('notes', 'Заметка', 'textarea', { full: true, placeholder: 'Порция, способ приготовления или другие детали' }) +
-      '<p class="hint meal-form-hint"><span class="meal-range-hint" hidden>Интервал задаётся в пределах одного дня. </span>Повторяется ежедневно и синхронизируется с сервером.</p>';
+    title = uiText("Добавить питание");
+    html = field('food', uiText("Что даёте питомцу?"), 'text', { required: true, full: true, placeholder: uiText("Например, индейка с рисом, 60 г") }) +
+      ("<fieldset class=\"meal-schedule-field\">"+"<legend>"+htmlUiText("Когда кормить")+"</legend>"+"<div class=\"meal-schedule-options\">"+"<label class=\"meal-schedule-option\">"+"<input type=\"radio\" name=\"schedule\" value=\"exact\" checked>"+"<span>"+htmlUiText("Точное время")+"</span>"+"</label>"+"<label class=\"meal-schedule-option\">"+"<input type=\"radio\" name=\"schedule\" value=\"range\">"+"<span>"+htmlUiText("Интервал времени")+"</span>"+"</label>"+"</div>"+"</fieldset>") +
+      field('time', uiText("Время кормления"), 'time', { required: true, full: true }) +
+      field('endTime', uiText("До какого времени"), 'time') +
+      field('notes', uiText("Заметка"), 'textarea', { full: true, placeholder: uiText("Порция, способ приготовления или другие детали") }) +
+      ("<p class=\"hint meal-form-hint\">"+"<span class=\"meal-range-hint\" hidden>"+htmlUiText("Интервал задаётся в пределах одного дня.")+" "+"</span>"+htmlUiText("Повторяется ежедневно и синхронизируется с сервером.")+"</p>");
     $('editor-title').textContent = title;
-    $('editor-context').textContent = 'Кабинет: ' + p.name;
+    $('editor-context').textContent = (uiText("Кабинет:")+" ") + p.name;
     $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers();
     const fields = $('editor-fields'), start = fields.querySelector('[name=time]'), end = fields.querySelector('[name=endTime]');
     start.value = '08:30';
     const updateTiming = () => {
       const range = fields.querySelector('[name=schedule]:checked').value === 'range';
       start.closest('.field').classList.toggle('full', !range);
-      start.closest('.field').firstChild.textContent = range ? 'С какого времени' : 'Время кормления';
+      start.closest('.field').firstChild.textContent = range ? uiText("С какого времени") : uiText("Время кормления");
       end.closest('.field').hidden = !range;
       end.disabled = !range; end.required = range;
       fields.querySelector('.meal-range-hint').hidden = !range;
@@ -1917,55 +2036,55 @@ function openExtraModal(type) {
   }
 
   if (type === 'reminder') {
-    title = 'Напоминание по Москве';
-    html = field('petId', 'Питомец', 'select', { options: state.pets.map(x => [x.id, x.name]) }) +
-      field('title', 'Что сделать?', 'text', { required: true, placeholder: 'Дать таблетку, сходить к ветеринару…' }) +
-      field('type', 'Тип', 'select', { options: [['Препарат', 'Препарат'], ['Процедура', 'Процедура'], ['Прогулка', 'Прогулка'], ['Ветеринар', 'Ветеринар'], ['Кормление', 'Кормление']] }) +
-      field('at', 'Дата и время МСК', 'datetime-local', { required: true }) +
-      field('frequency', 'Повтор', 'select', { options: [['once', 'Один раз'], ['days', 'Каждые N дней'], ['months', 'Каждые N месяцев']] }) +
-      field('interval', 'Интервал N', 'number', { min: '1', step: '1', placeholder: 'Для повторения' });
+    title = uiText("Напоминание по Москве");
+    html = field('petId', uiText("Питомец"), 'select', { options: state.pets.map(x => [x.id, x.name]) }) +
+      field('title', uiText("Что сделать?"), 'text', { required: true, placeholder: uiText("Дать таблетку, сходить к ветеринару…") }) +
+      field('type', uiText("Тип"), 'select', { options: [['Препарат', 'Препарат'], ['Процедура', 'Процедура'], ['Прогулка', 'Прогулка'], ['Ветеринар', 'Ветеринар'], ['Кормление', 'Кормление']] }) +
+      field('at', uiText("Дата и время МСК"), 'datetime-local', { required: true }) +
+      field('frequency', uiText("Повтор"), 'select', { options: [['once', uiText("Один раз")], ['days', uiText("Каждые N дней")], ['months', uiText("Каждые N месяцев")]] }) +
+      field('interval', uiText("Интервал N"), 'number', { min: '1', step: '1', placeholder: uiText("Для повторения") });
   } else if (type === 'feeding-log') {
-    title = 'Записать кормление';
-    html = field('food', 'Что дали?', 'text', { required: true }) +
-      field('amount', 'Порция', 'text', { placeholder: 'Например, 60 г' }) +
-      field('at', 'Дата и время МСК', 'datetime-local', { required: true }) +
-      field('notes', 'Заметка', 'textarea', { full: true });
+    title = uiText("Записать кормление");
+    html = field('food', uiText("Что дали?"), 'text', { required: true }) +
+      field('amount', uiText("Порция"), 'text', { placeholder: uiText("Например, 60 г") }) +
+      field('at', uiText("Дата и время МСК"), 'datetime-local', { required: true }) +
+      field('notes', uiText("Заметка"), 'textarea', { full: true });
   } else if (type === 'document') {
-    title = 'Добавить документ';
-    html = field('title', 'Название', 'text', { required: true, placeholder: 'Ветпаспорт, анализ крови…' }) +
-      field('type', 'Тип', 'select', { options: [['passport', 'Ветеринарный паспорт'], ['conclusion', 'Заключение'], ['prescription', 'Назначение'], ['other', 'Другое']] }) +
-      field('date', 'Дата', 'date', { required: true }) +
-      filePickerMarkup('document-upload', 'file', 'document', 'Файл документа', true);
+    title = uiText("Добавить документ");
+    html = field('title', uiText("Название"), 'text', { required: true, placeholder: uiText("Ветпаспорт, анализ крови…") }) +
+      field('type', uiText("Тип"), 'select', { options: [['passport', uiText("Ветеринарный паспорт")], ['conclusion', uiText("Заключение")], ['prescription', uiText("Назначение")], ['other', uiText("Другое")]] }) +
+      field('date', uiText("Дата"), 'date', { required: true }) +
+      filePickerMarkup('document-upload', 'file', 'document', uiText("Файл документа"), true);
   } else if (type === 'shopping') {
-    title = 'Добавить покупку';
-    html = field('title', 'Что купить?', 'text', { required: true }) +
-      field('quantity', 'Количество или размер');
+    title = uiText("Добавить покупку");
+    html = field('title', uiText("Что купить?"), 'text', { required: true }) +
+      field('quantity', uiText("Количество или размер"));
   } else if (type === 'vet-contact') {
-    title = 'Информация о клинике';
-    html = field('clinicUrl', 'Ссылка или название клиники', 'text', { full: true, placeholder: 'https://vet-friend.example.ru' }) +
-      field('doctor', 'Имя врача', 'text', { full: true });
+    title = uiText("Информация о клинике");
+    html = field('clinicUrl', uiText("Ссылка или название клиники"), 'text', { full: true, placeholder: 'https://vet-friend.example.ru' }) +
+      field('doctor', uiText("Имя врача"), 'text', { full: true });
   } else if (type === 'profile') {
-    title = 'Настройки аккаунта';
-    html = field('name', 'Имя', 'text', { required: true }) + field('email', 'Электронная почта (смена через подтверждение ниже)', 'email', { required: true }) + field('timezone', 'Часовой пояс', 'select', { options: [...new Set([state.user.timezone || 'Europe/Moscow', ...(Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : ['Europe/Moscow','UTC','Europe/Kaliningrad','Asia/Yekaterinburg','Asia/Novosibirsk','Asia/Vladivostok'])])].map(zone => [zone, zone]) });
+    title = uiText("Настройки аккаунта");
+    html = field('name', uiText("Имя"), 'text', { required: true }) + field('email', uiText("Электронная почта (смена через подтверждение ниже)"), 'email', { required: true }) + field('timezone', uiText("Часовой пояс"), 'select', { options: [...new Set([state.user.timezone || 'Europe/Moscow', ...(Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : ['Europe/Moscow','UTC','Europe/Kaliningrad','Asia/Yekaterinburg','Asia/Novosibirsk','Asia/Vladivostok'])])].map(zone => [zone, zone]) });
   } else if (type === 'member') {
-    title = 'Участник ухода';
-    html = field('email', 'Почта зарегистрированного участника', 'email', { required: true }) + field('role', 'Роль', 'select', { options: [['editor', 'Редактор'], ['viewer', 'Просмотр']] }) + field('until', 'Доступ до', 'date');
+    title = uiText("Участник ухода");
+    html = field('email', uiText("Почта зарегистрированного участника"), 'email', { required: true }) + field('role', uiText("Роль"), 'select', { options: [['editor', 'Редактор'], ['viewer', 'Просмотр']] }) + field('until', uiText("Доступ до"), 'date');
   } else if (type === 'avatar') {
-    title = 'Аватар питомца';
-    html = field('background', 'Фон', 'select', { options: [['lavender', 'Лаванда'], ['peach', 'Персик'], ['mint', 'Мята']] }) +
-      field('accessory', 'Аксессуар', 'select', { options: [['none', 'Без аксессуара'], ['bow', 'Бант'], ['crown', 'Корона']] }) +
-      filePickerMarkup('avatar-photo-upload', 'photo', 'photo', 'Фото питомца');
+    title = uiText("Аватар питомца");
+    html = field('background', uiText("Фон"), 'select', { options: [['lavender', uiText("Лаванда")], ['peach', uiText("Персик")], ['mint', uiText("Мята")]] }) +
+      field('accessory', uiText("Аксессуар"), 'select', { options: [['none', uiText("Без аксессуара")], ['bow', uiText("Бант")], ['crown', uiText("Корона")]] }) +
+      filePickerMarkup('avatar-photo-upload', 'photo', 'photo', uiText("Фото питомца"));
   } else if (type === 'settings') {
-    title = 'Уведомления';
-    html = field('quietEnabled', 'Тихие часы', 'select', { options: [['no', 'Выключены'], ['yes', 'Включены']] }) +
-      field('quietStart', 'Начало', 'time') +
-      field('quietEnd', 'Конец', 'time') +
-      '<div class="field full">Типы событий</div>' +
-      ['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка'].map(t => '<label class="small" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" name="types" value="' + t + '"> ' + t + '</label>').join('');
+    title = uiText("Уведомления");
+    html = field('quietEnabled', uiText("Тихие часы"), 'select', { options: [['no', uiText("Выключены")], ['yes', uiText("Включены")]] }) +
+      field('quietStart', uiText("Начало"), 'time') +
+      field('quietEnd', uiText("Конец"), 'time') +
+      ("<div class=\"field full\">"+htmlUiText("Типы событий")+"</div>") +
+      ['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка'].map(t => '<label class="small" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" name="types" value="' + t + '"> ' + htmlUiText(t) + '</label>').join('');
   }
 
   $('editor-title').textContent = title;
-  $('editor-context').textContent = ['profile', 'settings'].includes(type) ? 'Настройки владельца' : ('Кабинет: ' + (p?.name || 'Питомец'));
+  $('editor-context').textContent = ['profile', 'settings'].includes(type) ? uiText("Настройки владельца") : ((uiText("Кабинет:")+" ") + (p?.name || uiText("Питомец")));
   $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers();
   $('editor-form').querySelector('.form-actions').style.display = 'flex';
 
@@ -1978,7 +2097,7 @@ function openExtraModal(type) {
     const updateInterval = () => {
       const repeated = frequency.value !== 'once';
       interval.closest('.field').hidden = !repeated; interval.disabled = !repeated; interval.required = repeated;
-      interval.closest('.field').firstChild.textContent = frequency.value === 'months' ? 'Повторять каждые N месяцев' : 'Повторять каждые N дней';
+      interval.closest('.field').firstChild.textContent = frequency.value === 'months' ? uiText('Повторять каждые N месяцев') : uiText('Повторять каждые N дней');
       if (repeated && !interval.value) interval.value = '1';
     };
     frequency.onchange = updateInterval; updateInterval();
@@ -1986,7 +2105,7 @@ function openExtraModal(type) {
     hint.className = 'hint full'; hint.setAttribute('role', 'status'); at.closest('.field').after(hint);
     const updateZoneHint = () => {
       const moment = mskMoment(at.value);
-      hint.textContent = Number.isNaN(moment.getTime()) ? 'Введите дату и время по Москве.' : 'В вашем часовом поясе (' + (state.user.timezone || 'Europe/Moscow') + '): ' + new Intl.DateTimeFormat('ru-RU', {timeZone:state.user.timezone || 'Europe/Moscow', dateStyle:'medium', timeStyle:'short'}).format(moment);
+      hint.textContent = Number.isNaN(moment.getTime()) ? uiText("Введите дату и время по Москве.") : (uiText("В вашем часовом поясе")+" (") + (state.user.timezone || 'Europe/Moscow') + '): ' + new Intl.DateTimeFormat(formatLocale, {timeZone:state.user.timezone || 'Europe/Moscow', dateStyle:'medium', timeStyle:'short'}).format(moment);
     };
     at.addEventListener('input', updateZoneHint); at.addEventListener('change', updateZoneHint); updateZoneHint();
   }
@@ -2040,11 +2159,11 @@ $('editor-form').onsubmit = async event => {
   const p = state.pets.find(x => x.id === (data.petId || $('editor').dataset.petId)) || pet();
   const submitButton = form.querySelector('[type=submit]');
   submitButton.disabled = true;
-  submitButton.textContent = 'Сохраняем…';
+  submitButton.textContent = uiText("Сохраняем…");
 
   try {
     if (modalType === 'pet' || modalType === 'pet-edit') {
-      if (data.birthDate && data.birthDate > today()) { notify('Дата рождения не может быть в будущем'); return; }
+      if (data.birthDate && data.birthDate > today()) { notify(uiText("Дата рождения не может быть в будущем")); return; }
       const photoFile = form.elements.namedItem('photo')?.files?.[0];
       let photoData = null;
       if (photoFile) {
@@ -2088,7 +2207,7 @@ $('editor-form').onsubmit = async event => {
         state.selected = newId;
         $('editor').close();
         show('health');
-        notify('Питомец ' + data.name + ' создан');
+        notify((uiText("Питомец")+" ") + data.name + (" "+uiText("создан")));
         return;
       } else if (p) {
         Object.assign(p, {
@@ -2132,7 +2251,7 @@ $('editor-form').onsubmit = async event => {
             body: JSON.stringify({ at: row.at })
           });
         }
-        logActivity(row.petId, 'Перенёс(ла): ' + row.title, '↷');
+        logActivity(row.petId, (uiText("Перенёс(ла):")+" ") + row.title, '↷');
       }
     } else if (modalType === 'activity') {
       logActivity(p.id, data.action, '🐾', data.actor);
@@ -2169,7 +2288,7 @@ $('editor-form').onsubmit = async event => {
         if (res?.id) serverId = res.id;
       }
       state.health.push({ id: serverId ? 'sh_' + serverId : uid(), serverId, petId: p.id, ...data, attachment });
-      logActivity(p.id, 'Добавил(а) запись здоровья: ' + data.title, '🩺');
+      logActivity(p.id, (uiText("Добавил(а) запись здоровья:")+" ") + data.title, '🩺');
     } else if (modalType === 'prescription') {
       let serverId = null;
       if (p.serverId) {
@@ -2187,7 +2306,7 @@ $('editor-form').onsubmit = async event => {
         if (res?.id) serverId = res.id;
       }
       state.prescriptions.push({ id: serverId ? 'spr_' + serverId : uid(), serverId, petId: p.id, ...data });
-      logActivity(p.id, 'Добавил(а) назначение: ' + data.name, '💊');
+      logActivity(p.id, (uiText("Добавил(а) назначение:")+" ") + data.name, '💊');
       if (p.serverId) await syncServerData(true);
     } else if (modalType === 'weight') {
       const kg = Number(data.kg);
@@ -2200,7 +2319,7 @@ $('editor-form').onsubmit = async event => {
         if (res?.id) serverId = res.id;
       }
       state.weights.push({ id: serverId ? 'sw_' + serverId : uid(), serverId, petId: p.id, date: data.date, kg });
-      logActivity(p.id, 'Измерил(а) вес: ' + kg + ' кг', '⚖️');
+      logActivity(p.id, (uiText("Измерил(а) вес:")+" ") + kg + (" "+uiText("кг")), '⚖️');
     } else if (modalType === 'nutrition') {
       let serverId = null;
       if (p.serverId) {
@@ -2228,11 +2347,11 @@ $('editor-form').onsubmit = async event => {
         price: data.price ? Number(data.price) : null,
         reactions: data.reactions ? data.reactions.split(',').map(x => x.trim()).filter(Boolean) : []
       });
-      logActivity(p.id, 'Добавил(а) оценку корма: ' + data.food, '🍽️');
+      logActivity(p.id, (uiText("Добавил(а) оценку корма:")+" ") + data.food, '🍽️');
     } else if (modalType === 'extra-meal-plan') {
       const endTime = data.schedule === 'range' ? data.endTime : '';
       if (data.schedule === 'range' && (!endTime || endTime <= data.time)) {
-        notify('Конец интервала должен быть позже начала в пределах одного дня.');
+        notify(uiText("Конец интервала должен быть позже начала в пределах одного дня."));
         return;
       }
       let serverId = null;
@@ -2281,7 +2400,7 @@ $('editor-form').onsubmit = async event => {
         intervalDays: data.frequency === 'days' ? Number(data.interval) : null,
         intervalMonths: data.frequency === 'months' ? Number(data.interval) : null
       });
-      logActivity(p.id, 'Запланировал(а): ' + data.title, '🔔');
+      logActivity(p.id, (uiText("Запланировал(а):")+" ") + data.title, '🔔');
     } else if (modalType === 'extra-feeding-log') {
       const atStr = data.at + '+03:00';
       let serverId = null;
@@ -2329,7 +2448,7 @@ $('editor-form').onsubmit = async event => {
         if (res?.id) serverId = res.id;
       }
       state.documents.push({ id: serverId ? 'sdoc_' + serverId : uid(), serverId, petId: p.id, title: data.title, type: data.type, date: data.date, file: { name: file?.name || data.title, data: fileData } });
-      logActivity(p.id, 'Добавил(а) документ: ' + data.title, '📎');
+      logActivity(p.id, (uiText("Добавил(а) документ:")+" ") + data.title, '📎');
     } else if (modalType === 'extra-shopping') {
       let serverId = null;
       if (p.serverId) {
@@ -2349,7 +2468,7 @@ $('editor-form').onsubmit = async event => {
         });
       }
     } else if (modalType === 'extra-profile') {
-      if(data.email.trim().toLowerCase() !== state.user.email) throw Error('Для смены почты используйте кнопку «Изменить почту» в безопасности аккаунта.');
+      if(data.email.trim().toLowerCase() !== state.user.email) throw Error(uiText("Для смены почты используйте кнопку «Изменить почту» в безопасности аккаунта."));
       await apiFetch('/auth/user',{method:'PUT',body:JSON.stringify({full_name:data.name,timezone:data.timezone})});
       state.user.name=data.name; state.user.timezone=data.timezone;
       updateAuthStatusUI();
@@ -2397,20 +2516,20 @@ $('editor-form').onsubmit = async event => {
     }
     render();
     if ((savedModalType === 'extra-reminder' || savedModalType === 'move') && savedAt) {
-      notify('Сохранено · событие запланировано на ' + savedAt.slice(11, 16) + ' МСК');
+      notify((uiText("Сохранено · событие запланировано на")+" ") + savedAt.slice(11, 16) + (" "+uiText("МСК")));
     } else if (savedModalType === 'extra-meal-plan' && savedMealTime) {
-      notify('Сохранено · кормление запланировано на ' + savedMealTime + ' МСК');
+      notify((uiText("Сохранено · кормление запланировано на")+" ") + savedMealTime + (" "+uiText("МСК")));
     } else {
-      notify('Сохранено');
+      notify(uiText("Сохранено"));
     }
     scheduleNextExactPush();
     setTimeout(checkDuePushNotifications, 350);
   } catch(err) {
-    notify(err.message || 'Не удалось сохранить изменения');
+    notify(err.message || uiText("Не удалось сохранить изменения"));
     if(authToken) await syncServerData(true);
   } finally {
     submitButton.disabled = false;
-    submitButton.textContent = 'Сохранить';
+    submitButton.textContent = uiText("Сохранить");
   }
 };
 
@@ -2420,6 +2539,12 @@ $('editor-form').onsubmit = async event => {
 let authMode = 'login';
 function openAuthDialog(mode = 'login') {
   authMode = mode;
+  const registering = mode === 'register';
+  $('auth-email').type = registering ? 'email' : 'text';
+  $('auth-email').inputMode = registering ? 'email' : 'text';
+  $('auth-email').placeholder = registering ? 'name@example.com' : uiText("Почта или логин администратора");
+  $('auth-email-label').textContent = registering ? uiText("Электронная почта") : uiText("Почта или логин администратора");
+  $('auth-password').autocomplete = registering ? 'new-password' : 'current-password';
   $('auth-password').minLength = mode === 'login' ? 1 : 8;
   $('auth-error').hidden = true;
   $('tab-login').classList.toggle('active', mode === 'login');
@@ -2427,26 +2552,34 @@ function openAuthDialog(mode = 'login') {
   $('tab-login').setAttribute('aria-selected', String(mode === 'login'));
   $('tab-register').setAttribute('aria-selected', String(mode === 'register'));
   $('auth-name-field').hidden = mode !== 'register';
-  $('auth-dialog-title').textContent = mode === 'login' ? 'Вход в PetCare' : 'Регистрация в PetCare';
-  $('auth-submit-btn').textContent = mode === 'login' ? 'Войти в аккаунт' : 'Создать аккаунт';
-  $('auth-dialog').showModal();
+  $('auth-dialog-title').textContent = mode === 'login' ? uiText("Вход в PetCare") : uiText("Регистрация в PetCare");
+  $('auth-submit-btn').textContent = mode === 'login' ? uiText("Войти в аккаунт") : uiText("Создать аккаунт");
+  if (!$('auth-dialog').open) $('auth-dialog').showModal();
 }
 
 $('tab-login').onclick = () => openAuthDialog('login');
 $('tab-register').onclick = () => openAuthDialog('register');
 $('close-auth-dialog').onclick = () => $('auth-dialog').close();
+$('auth-guest-preview').onclick = () => {
+  $('auth-password').value = '';
+  $('auth-dialog').close();
+};
 if ($('api-open')) $('api-open').onclick = () => openAuthDialog('login');
 if ($('btn-open-auth-modal')) $('btn-open-auth-modal').onclick = () => openAuthDialog('login');
 
 $('auth-form').onsubmit = async e => {
   e.preventDefault();
   $('auth-error').hidden = true;
+  $('auth-support').hidden = true;
   const email = $('auth-email').value.trim();
   const password = $('auth-password').value;
   const fullName = $('auth-name').value.trim() || 'Владелец';
 
   const submit = $('auth-submit-btn');
-  submit.disabled = true; submit.textContent = 'Подождите…';
+  if (submit.disabled) return;
+  submit.disabled = true; submit.textContent = uiText("Подождите…");
+  $('auth-form').setAttribute('aria-busy', 'true');
+  $('auth-guest-preview').disabled = true;
   $('tab-login').disabled = true; $('tab-register').disabled = true;
   try {
     const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
@@ -2454,7 +2587,9 @@ $('auth-form').onsubmit = async e => {
     const res = await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
     if (res?.verification_required) { $('auth-dialog').close(); openSecurity('register', res.challenge_id); return; }
     if (res?.access_token) {
+      if (res.user?.is_admin) { enterAdmin(res.access_token); return; }
       authToken = res.access_token;
+      try { sessionStorage.removeItem('petcare_admin_session'); } catch {}
       try {
         localStorage.setItem(STORAGE_AUTH_KEY, authToken);
         localStorage.removeItem('petcare-logged-out');
@@ -2464,58 +2599,28 @@ $('auth-form').onsubmit = async e => {
       }
       $('auth-dialog').close();
       await syncServerData();
-      notify(authMode === 'register' ? 'Аккаунт создан и подключён!' : 'Вход выполнен: ' + state.user.name);
+      restoreRoute();
+      notify(authMode === 'register' ? uiText("Аккаунт создан и подключён!") : (uiText("Вход выполнен:")+" ") + state.user.name);
     }
   } catch (err) {
-    $('auth-error').textContent = err.message || 'Ошибка авторизации';
+    $('auth-error').textContent = err.message || uiText("Ошибка авторизации");
+    $('auth-support').textContent = err.support ? (uiText("Поддержка:")+" ") + err.support : '';
+    $('auth-support').hidden = !err.support;
     $('auth-error').hidden = false; $('auth-error').focus();
-  } finally { submit.disabled = false; submit.textContent = authMode === 'login' ? 'Войти в аккаунт' : 'Создать аккаунт'; $('tab-login').disabled = false; $('tab-register').disabled = false; }
+  } finally {
+    submit.disabled = false;
+    submit.textContent = authMode === 'login' ? uiText("Войти в аккаунт") : uiText("Создать аккаунт");
+    $('auth-form').removeAttribute('aria-busy');
+    $('auth-guest-preview').disabled = false;
+    $('tab-login').disabled = false;
+    $('tab-register').disabled = false;
+  }
 };
-
-document.querySelectorAll('[data-demo-login]').forEach(btn => {
-  btn.onclick = async () => {
-    const accId = btn.dataset.demoLogin;
-    $('auth-error').hidden = true;
-    btn.disabled = true;
-    try {
-      const res = await apiFetch('/auth/demo-login/' + accId, { method: 'POST' });
-      if (res?.access_token) {
-        authToken = res.access_token;
-        try {
-          localStorage.setItem(STORAGE_AUTH_KEY, authToken);
-          localStorage.removeItem('petcare-logged-out');
-        } catch {}
-        if (res.user) {
-          state.user = {
-            id: res.user.id,
-            name: res.user.full_name || (accId === '2' ? 'Анна' : 'Илья'),
-            email: res.user.email || ('demo' + accId + '@petcare.app'),
-            timezone: res.user.timezone || 'Europe/Moscow'
-          };
-        }
-        state.selected = null;
-        $('auth-dialog').close();
-        await syncServerData();
-      }
-    } catch (err) {
-      $('auth-error').textContent = err.message || 'Ошибка демо-входа';
-      $('auth-error').hidden = false;
-    } finally {
-      btn.disabled = false;
-    }
-  };
-});
 
 $('api-logout').onclick = async () => {
   try { const reg=await navigator.serviceWorker?.getRegistration(); const sub=await reg?.pushManager.getSubscription(); if(sub){await apiFetch('/notifications/unsubscribe',{method:'POST',body:JSON.stringify({endpoint:sub.endpoint})}); await sub.unsubscribe();} await apiFetch('/auth/logout',{method:'POST'}); } catch(err) { notify(err.message); return; }
-  authToken = '';
-  try {
-    localStorage.removeItem(STORAGE_AUTH_KEY);
-    localStorage.setItem('petcare-logged-out', '1');
-  } catch {}
-  state.user = { id: null, name: 'Гость', email: '', timezone: 'Europe/Moscow' };
-  state.pets = [];
-  updateAuthStatusUI();
+  clearSession();
+  try { localStorage.setItem('petcare-logged-out', '1'); } catch {}
   render();
   openAuthDialog('login');
 };
@@ -2557,9 +2662,9 @@ setInterval(() => {
   };
   const dayKey = value => String(value.getFullYear()).padStart(4, '0') + '-' + pad(value.getMonth() + 1) + '-' + pad(value.getDate());
   const readDay = value => { const [y, m, d] = value.split('-').map(Number); return civil(y, m - 1, d); };
-  const fullDate = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-  const monthDate = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' });
-  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  const fullDate = new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'long', year: 'numeric' });
+  const monthDate = new Intl.DateTimeFormat(formatLocale, { month: 'long', year: 'numeric' });
+  const months = [uiText("Январь"), uiText("Февраль"), uiText("Март"), uiText("Апрель"), uiText("Май"), uiText("Июнь"), uiText("Июль"), uiText("Август"), uiText("Сентябрь"), uiText("Октябрь"), uiText("Ноябрь"), uiText("Декабрь")];
   get('month').innerHTML = months.map((name, index) => '<option value="' + index + '">' + name + '</option>').join('');
   let source = null, draft = null, viewYear = 0, viewMonth = 0, stage = 'date', moscow = false;
   const currentDay = () => moscow ? mskDay() : dayKey(new Date());
@@ -2582,7 +2687,7 @@ setInterval(() => {
     get('month-announcement').textContent = monthDate.format(civil(viewYear, viewMonth, 1));
     const first = civil(viewYear, viewMonth, 1), offset = (first.getDay() + 6) % 7;
     const t = currentDay();
-    let html = '<div role="row" class="calendar-week">' + ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(day => '<span role="columnheader">' + day + '</span>').join('') + '</div>';
+    let html = '<div role="row" class="calendar-week">' + [uiText("Пн"), uiText("Вт"), uiText("Ср"), uiText("Чт"), uiText("Пт"), uiText("Сб"), uiText("Вс")].map(day => '<span role="columnheader">' + day + '</span>').join('') + '</div>';
     const preferred = focusDay || (draft.day.slice(0, 7) === dayKey(first).slice(0, 7) ? draft.day : dayKey(first));
     const weeks = Math.ceil((offset + civil(viewYear, viewMonth + 1, 0).getDate()) / 7);
     const days = Array.from({ length: weeks * 7 }, (_, index) => civil(viewYear, viewMonth, index - offset + 1));
@@ -2644,7 +2749,7 @@ setInterval(() => {
     get('date-tab').tabIndex = stage === 'date' ? 0 : -1; get('time-tab').tabIndex = stage === 'time' ? 0 : -1;
     get('date-tab').setAttribute('aria-selected', String(stage === 'date'));
     get('time-tab').setAttribute('aria-selected', String(stage === 'time'));
-    get('apply').textContent = combined && stage === 'date' ? 'Далее: время' : source.type === 'date' ? 'Выбрать дату' : 'Готово';
+    get('apply').textContent = combined && stage === 'date' ? uiText("Далее: время") : source.type === 'date' ? uiText("Выбрать дату") : uiText("Готово");
     error(''); updatePreview();
     if (stage === 'time') syncWheels();
     if (focus) {
@@ -2655,8 +2760,8 @@ setInterval(() => {
   function open(input) {
     if (picker.open || input.disabled || input.readOnly) return;
     source = input; get('manual-time').open = false;
-    const label = [...(input.labels || [])].map(node => node.firstChild?.textContent.trim()).filter(Boolean).join(' ') || 'Дата и время';
-    moscow = /МСК|Москв/i.test(label);
+    const label = [...(input.labels || [])].map(node => node.firstChild?.textContent.trim()).filter(Boolean).join(' ') || uiText("Дата и время");
+    moscow = /МСК|Москв|MSK|Moscow/i.test(label);
     const initial = input.value;
     let day = input.type === 'time' ? currentDay() : initial.slice(0, 10) || currentDay();
     const clock = input.type === 'time' ? initial : initial.slice(11, 16);
@@ -2665,7 +2770,7 @@ setInterval(() => {
     const d = readDay(day); viewYear = d.getFullYear(); viewMonth = d.getMonth();
     get('hour').value = pad(hour); get('minute').value = pad(minute);
     get('context').textContent = label;
-    get('title').textContent = input.type === 'time' ? 'Выбрать время' : input.type === 'date' ? 'Выбрать дату' : 'Дата и время';
+    get('title').textContent = input.type === 'time' ? uiText("Выбрать время") : input.type === 'date' ? uiText("Выбрать дату") : uiText("Дата и время");
     get('clear').hidden = input.required;
     picker.querySelectorAll('[data-relative-day]').forEach(button => button.disabled = !isDateAllowed(relativeDay(Number(button.dataset.relativeDay))));
     renderCalendar(); showStage(input.type === 'time' ? 'time' : 'date');
@@ -2675,7 +2780,7 @@ setInterval(() => {
   get('close').onclick = close; get('cancel').onclick = close;
   function commit(value) {
     const check = source.cloneNode(); check.value = value;
-    if (check.value !== value || !check.checkValidity()) { error('Выберите допустимые дату и время: проверьте ограничения поля.'); return; }
+    if (check.value !== value || !check.checkValidity()) { error(uiText("Выберите допустимые дату и время: проверьте ограничения поля.")); return; }
     source.value = value;
     source.dispatchEvent(new Event('input', { bubbles: true }));
     source.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2683,10 +2788,10 @@ setInterval(() => {
   }
   get('clear').onclick = () => commit('');
   get('apply').onclick = () => {
-    if (stage === 'date' && (!get('year').checkValidity() || !get('year').value)) { error('Год должен быть от 1 до 9999.'); return; }
+    if (stage === 'date' && (!get('year').checkValidity() || !get('year').value)) { error(uiText("Год должен быть от 1 до 9999.")); return; }
     if (stage === 'date' && get('direct').value !== draft.day.split('-').reverse().join('.') && !get('direct').onchange()) return;
     if (stage === 'date' && source.type === 'datetime-local') { showStage('time', true); return; }
-    if (source.type !== 'date' && (!get('hour').checkValidity() || !get('minute').checkValidity() || get('hour').value === '' || get('minute').value === '')) { error('Укажите часы от 0 до 23 и минуты от 0 до 59.'); return; }
+    if (source.type !== 'date' && (!get('hour').checkValidity() || !get('minute').checkValidity() || get('hour').value === '' || get('minute').value === '')) { error(uiText("Укажите часы от 0 до 23 и минуты от 0 до 59.")); return; }
     draft.hour = Number(get('hour').value) || 0;
     draft.minute = Number(get('minute').value) || 0;
     const clock = pad(draft.hour) + ':' + pad(draft.minute);
@@ -2715,7 +2820,7 @@ setInterval(() => {
   get('direct').onchange = () => {
     const match = get('direct').value.trim().match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})$/);
     const key = match ? match[3] + '-' + match[2] + '-' + match[1] : '';
-    if (!match || !isDateAllowed(key) || dayKey(readDay(key)) !== key) { error('Введите существующую дату в формате ДД.ММ.ГГГГ.'); return false; }
+    if (!match || !isDateAllowed(key) || dayKey(readDay(key)) !== key) { error(uiText("Введите существующую дату в формате ДД.ММ.ГГГГ.")); return false; }
     if (draft.day === key) { error(''); return true; }
     draft.day = key; const d = readDay(key); viewYear = d.getFullYear(); viewMonth = d.getMonth(); renderCalendar(); updatePreview(); error(''); return true;
   };
@@ -2737,7 +2842,7 @@ setInterval(() => {
   get('prev').onclick = () => { const t = civil(viewYear, viewMonth - 1, 1); viewYear = t.getFullYear(); viewMonth = t.getMonth(); renderCalendar(); };
   get('next').onclick = () => { const t = civil(viewYear, viewMonth + 1, 1); viewYear = t.getFullYear(); viewMonth = t.getMonth(); renderCalendar(); };
   get('month').onchange = () => { viewMonth = Number(get('month').value); renderCalendar(); };
-  get('year').onchange = () => { if (!get('year').checkValidity() || !get('year').value) { error('Год должен быть от 1 до 9999.'); return; } viewYear = Number(get('year').value); renderCalendar(); error(''); };
+  get('year').onchange = () => { if (!get('year').checkValidity() || !get('year').value) { error(uiText("Год должен быть от 1 до 9999.")); return; } viewYear = Number(get('year').value); renderCalendar(); error(''); };
   get('date-tab').onclick = () => showStage('date');
   get('time-tab').onclick = () => showStage('time');
 
@@ -2766,6 +2871,18 @@ setInterval(() => {
 // 12. EVENT LISTENERS & INITIALIZATION
 // =====================================================================
 setupPetAccountSwitcher();
+$('petcare-shell').addEventListener('click', event => {
+  if (hasSession() || !event.target.closest('[data-guest-lock]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openAuthDialog();
+}, true);
+$('connection-retry').onclick = () => void syncServerData();
+window.addEventListener('offline', updateConnectionStatus);
+window.addEventListener('online', () => {
+  updateConnectionStatus();
+  if (sessionLoadFailed && !syncPending) void syncServerData();
+});
 document.querySelectorAll('[data-route]').forEach(b => b.onclick = () => show(b.dataset.route));
 document.querySelectorAll('.nav [data-page]').forEach(b => b.onclick = e => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return; e.preventDefault(); if (b.getAttribute('aria-disabled') !== 'true') show(b.dataset.page); });
 document.querySelectorAll('[data-modal]').forEach(b => b.onclick = () => openModal(b.dataset.modal));
@@ -2774,7 +2891,7 @@ $('profile-paw').onclick = () => show('profile');
 let editorDirty = false;
 $('editor-form').addEventListener('input', () => { editorDirty = true; });
 $('editor-form').addEventListener('change', () => { editorDirty = true; });
-const mayCloseEditor = () => !editorDirty || confirm('Закрыть форму без сохранения изменений?');
+const mayCloseEditor = () => !editorDirty || confirm(uiText("Закрыть форму без сохранения изменений?"));
 $('editor').addEventListener('cancel', e => { if (!mayCloseEditor()) e.preventDefault(); });
 $('editor').addEventListener('close', () => { editorDirty = false; });
 $('cancel-editor').onclick = $('close-editor').onclick = () => { if (mayCloseEditor()) $('editor').close(); };
@@ -2866,7 +2983,7 @@ async function snoozeReminderFromPush(eventId, minutes = 10) {
   }
   render();
   scheduleNextExactPush();
-  showCopiedToast('Отложено на ' + minutes + ' мин (' + parts.hour + ':' + parts.minute + ' МСК)');
+  showCopiedToast((uiText("Отложено на")+" ") + minutes + (" "+uiText("мин")+" (") + parts.hour + ':' + parts.minute + (" "+uiText("МСК)")));
 }
 
 async function completeMealFromPush(mealId) {
@@ -2911,7 +3028,7 @@ async function completeMealFromPush(mealId) {
     });
   }
   render();
-  showCopiedToast('Кормление отмечено: ' + meal.food);
+  showCopiedToast((uiText("Кормление отмечено:")+" ") + meal.food);
 }
 
 function showPushBanner(title, body, opts = {}) {
@@ -2929,25 +3046,25 @@ function showPushBanner(title, body, opts = {}) {
     ? '<div class="push-banner-avatar" aria-hidden="true">' + petAvatar(targetPet) + '</div>'
     : '<div class="push-banner-avatar is-icon" aria-hidden="true"><svg><use href="#paw"/></svg></div>';
 
-  const badgeText = opts.badge || (opts.mealId ? 'Питание по расписанию' : opts.eventId ? 'Время события' : 'Уведомление PetCare');
-  const timeClock = opts.timeLabel || (mskNow().slice(11, 16) + ' МСК');
+  const badgeText = opts.badge || (opts.mealId ? uiText("Питание по расписанию") : opts.eventId ? uiText("Время события") : uiText("Уведомление PetCare"));
+  const timeClock = opts.timeLabel || (mskNow().slice(11, 16) + (" "+uiText("МСК")));
   const durationMs = opts.duration || (opts.eventId || opts.mealId ? 24000 : 9000);
   const targetPage = opts.page || 'care';
 
   let actionsHtml = '';
   if (opts.eventId) {
     actionsHtml =
-      '<button type="button" class="push-banner-btn primary" data-push-complete>✓ Выполнено</button>' +
-      '<button type="button" class="push-banner-btn" data-push-snooze>⏰ +10 мин</button>' +
-      '<button type="button" class="push-banner-btn ghost" data-push-open>К расписанию</button>';
+      ("<button type=\"button\" class=\"push-banner-btn primary\" data-push-complete>"+"✓ "+htmlUiText("Выполнено")+"</button>") +
+      ("<button type=\"button\" class=\"push-banner-btn\" data-push-snooze>"+htmlUiText("⏰ +10 мин")+"</button>") +
+      ("<button type=\"button\" class=\"push-banner-btn ghost\" data-push-open>"+htmlUiText("К расписанию")+"</button>");
   } else if (opts.mealId) {
     actionsHtml =
-      '<button type="button" class="push-banner-btn primary" data-push-meal-done>✓ Покормили</button>' +
-      '<button type="button" class="push-banner-btn" data-push-open>Открыть питание</button>';
+      ("<button type=\"button\" class=\"push-banner-btn primary\" data-push-meal-done>"+"✓ "+htmlUiText("Покормили")+"</button>") +
+      ("<button type=\"button\" class=\"push-banner-btn\" data-push-open>"+htmlUiText("Открыть питание")+"</button>");
   } else {
     actionsHtml =
-      '<button type="button" class="push-banner-btn primary" data-push-open>' + esc(opts.actionLabel || 'Открыть расписание') + '</button>' +
-      '<button type="button" class="push-banner-btn ghost" data-push-dismiss>Понятно</button>';
+      '<button type="button" class="push-banner-btn primary" data-push-open>' + esc(opts.actionLabel || uiText("Открыть расписание")) + '</button>' +
+      ("<button type=\"button\" class=\"push-banner-btn ghost\" data-push-dismiss>"+htmlUiText("Понятно")+"</button>");
   }
 
   const card = document.createElement('div');
@@ -2964,7 +3081,7 @@ function showPushBanner(title, body, opts = {}) {
       '<p class="push-banner-text">' + esc(body) + '</p>' +
       '<div class="push-banner-actions">' + actionsHtml + '</div>' +
     '</div>' +
-    '<button type="button" class="push-banner-close" aria-label="Закрыть уведомление">×</button>' +
+    ("<button type=\"button\" class=\"push-banner-close\" aria-label=\""+htmlUiText("Закрыть уведомление")+"\">"+"×"+"</button>") +
     '<div class="push-banner-progress"><span style="animation-duration:' + durationMs + 'ms"></span></div>';
 
   let timerId = null;
@@ -3037,7 +3154,7 @@ async function dispatchPushNotification(title, body, opts = {}) {
   showPushBanner(title, body, opts);
 
   if (document.hidden) {
-    const origTitle = 'PetCare — забота о питомцах';
+    const origTitle = uiText("PetCare — забота о питомцах");
     document.title = '🔔 ' + title + ' — PetCare';
     const restoreTitle = () => {
       if (!document.hidden) {
@@ -3084,11 +3201,11 @@ function updatePushStatusUI() {
   const btn = $('enable-alerts');
   const badge = $('push-status-badge');
   if (btn) {
-    btn.textContent = active ? 'Отключить пуш-уведомления' : '🔔 Включить пуш-уведомления';
+    btn.textContent = active ? uiText("Отключить пуш-уведомления") : uiText("🔔 Включить пуш-уведомления");
     btn.classList.toggle('primary', !active);
   }
   if (badge) {
-    badge.textContent = active ? '🔔 Пуш-уведомления активны' : 'Уведомления выключены';
+    badge.textContent = active ? uiText("🔔 Пуш-уведомления активны") : uiText("Уведомления выключены");
     badge.classList.toggle('off', !active);
   }
 }
@@ -3112,7 +3229,7 @@ async function togglePushNotifications() {
     savePushSettings().catch(()=>{});
     updatePushStatusUI();
     renderProfile();
-    showCopiedToast('Пуш-уведомления отключены');
+    showCopiedToast(uiText("Пуш-уведомления отключены"));
     return;
   }
 
@@ -3129,13 +3246,13 @@ async function togglePushNotifications() {
     ? state.events.filter(e => isForPet(e, p) && e.status === 'pending' && mskMoment(e.at).getTime() >= nowMs - 60000).sort((a, b) => mskMoment(a.at) - mskMoment(b.at))[0]
     : null;
   const subText = nextEv
-    ? (p.name + ' · следующее напоминание «' + nextEv.title + '» придёт точно в ' + mskLabel(nextEv.at) + ' МСК')
-    : ('Уведомления придут ровно в назначенное время процедур и кормлений' + (p ? ' для ' + p.name : '') + '.');
+    ? (p.name + (" · "+uiText("следующее напоминание")+" «") + nextEv.title + ("» "+uiText("придёт точно в")+" ") + mskLabel(nextEv.at) + (" "+uiText("МСК")))
+    : (uiText("Уведомления придут ровно в назначенное время процедур и кормлений") + (p ? (" "+uiText("для")+" ") + p.name : '') + '.');
 
   await dispatchPushNotification(
-    'Пуш-уведомления включены',
+    uiText("Пуш-уведомления включены"),
     subText,
-    { badge: '🔔 Канал уведомлений активен', page: 'care', actionLabel: 'К расписанию', petId: p?.id, duration: 7000 }
+    { badge: uiText("🔔 Канал уведомлений активен"), page: 'care', actionLabel: uiText("К расписанию"), petId: p?.id, duration: 7000 }
   );
 }
 
@@ -3157,10 +3274,10 @@ async function triggerTestPushNotification() {
     const ev = upcomingEvents[0];
     await dispatchPushNotification(
       ev.title,
-      (p ? p.name + ' · ' : '') + (ev.type || 'Процедура') + ' · назначено на ' + mskLabel(ev.at) + ' МСК',
+      (p ? p.name + ' · ' : '') + (ev.type || 'Процедура') + (" · "+uiText("назначено на")+" ") + mskLabel(ev.at) + (" "+uiText("МСК")),
       {
-        badge: '🔔 Тест пуш-уведомления',
-        timeLabel: mskLabel(ev.at) + ' МСК',
+        badge: uiText("🔔 Тест пуш-уведомления"),
+        timeLabel: mskLabel(ev.at) + (" "+uiText("МСК")),
         page: 'care',
         petId: p?.id,
         eventId: ev.id,
@@ -3174,10 +3291,10 @@ async function triggerTestPushNotification() {
     const meal = plans[0];
     await dispatchPushNotification(
       meal.food,
-      (p ? p.name + ' · ' : '') + 'Ежедневное кормление в ' + mealTimeLabel(meal),
+      (p ? p.name + ' · ' : '') + (uiText("Ежедневное кормление в")+" ") + mealTimeLabel(meal),
       {
-        badge: '🔔 Тест пуш-уведомления',
-        timeLabel: mealTimeLabel(meal) + ' МСК',
+        badge: uiText("🔔 Тест пуш-уведомления"),
+        timeLabel: mealTimeLabel(meal) + (" "+uiText("МСК")),
         page: 'nutrition',
         petId: p?.id,
         mealId: meal.id,
@@ -3188,12 +3305,12 @@ async function triggerTestPushNotification() {
   }
 
   await dispatchPushNotification(
-    'Проверка пуш-уведомлений',
-    (p ? 'Кабинет ' + p.name + ': ' : '') + 'Уведомления работают и придут ровно в назначенное время.',
+    uiText("Проверка пуш-уведомлений"),
+    (p ? (uiText("Кабинет")+" ") + p.name + ': ' : '') + uiText("Уведомления работают и придут ровно в назначенное время."),
     {
-      badge: '🔔 Тест пуш-уведомления',
+      badge: uiText("🔔 Тест пуш-уведомления"),
       page: 'care',
-      actionLabel: 'К расписанию',
+      actionLabel: uiText("К расписанию"),
       petId: p?.id,
       tag: 'test_push_' + Date.now()
     }
@@ -3246,12 +3363,12 @@ function checkDuePushNotifications() {
       if (notifiedPushKeys.has(key)) continue;
       notifiedPushKeys.add(key);
       const targetPet = state.pets.find(x => String(x.id) === String(ev.petId));
-      const clockStr = (ev.at.slice(11, 16) || currentClock) + ' МСК';
+      const clockStr = (ev.at.slice(11, 16) || currentClock) + (" "+uiText("МСК"));
       dispatchPushNotification(
         ev.title,
-        (targetPet ? targetPet.name + ' · ' : '') + (ev.type || 'Процедура') + ' по расписанию (' + mskLabel(ev.at) + ' МСК)',
+        (targetPet ? targetPet.name + ' · ' : '') + (ev.type || 'Процедура') + (" "+uiText("по расписанию")+" (") + mskLabel(ev.at) + (" "+uiText("МСК)")),
         {
-          badge: '⏰ Время события',
+          badge: uiText("⏰ Время события"),
           timeLabel: clockStr,
           page: 'care',
           petId: targetPet?.id,
@@ -3279,12 +3396,12 @@ function checkDuePushNotifications() {
             meal.food,
             (targetPet ? targetPet.name + ' · ' : '') +
               (isRange
-                ? 'Начался интервал кормления (' + mealTimeLabel(meal) + ' МСК)'
-                : 'Пора покормить питомца (' + mealTimeLabel(meal) + ' МСК)') +
+                ? (uiText("Начался интервал кормления")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК)"))
+                : (uiText("Пора покормить питомца")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК)"))) +
               (meal.notes ? ' · ' + meal.notes : ''),
             {
-              badge: isRange ? '🍽️ Начало интервала' : '🍽️ Время кормления',
-              timeLabel: mealTimeLabel(meal) + ' МСК',
+              badge: isRange ? uiText("🍽️ Начало интервала") : uiText("🍽️ Время кормления"),
+              timeLabel: mealTimeLabel(meal) + (" "+uiText("МСК")),
               page: 'nutrition',
               petId: targetPet?.id,
               mealId: meal.id,
@@ -3302,11 +3419,11 @@ function checkDuePushNotifications() {
           dispatchPushNotification(
             meal.food,
             (targetPet ? targetPet.name + ' · ' : '') +
-              'Завершается интервал кормления (' + mealTimeLabel(meal) + ' МСК) — не забудьте покормить питомца' +
+              (uiText("Завершается интервал кормления")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК) — не забудьте покормить питомца")) +
               (meal.notes ? ' · ' + meal.notes : ''),
             {
-              badge: '⏰ Конец интервала кормления',
-              timeLabel: meal.endTime + ' МСК',
+              badge: uiText("⏰ Конец интервала кормления"),
+              timeLabel: meal.endTime + (" "+uiText("МСК")),
               page: 'nutrition',
               petId: targetPet?.id,
               mealId: meal.id,
@@ -3397,6 +3514,10 @@ if ($('test-push-btn')) $('test-push-btn').onclick = () => triggerTestPushNotifi
 updatePushStatusUI();
 
 function restoreRoute() {
+  if (!hasSession()) {
+    render();
+    return;
+  }
   let parts;
   try { parts = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent); }
   catch { show('pets'); return; }
@@ -3411,42 +3532,22 @@ function restoreRoute() {
 window.addEventListener('hashchange', restoreRoute);
 
 // Initial render + full backend sync
-restoreRoute();
+if (!authToken) restoreRoute();
 syncServerData().then(() => {
   // Pet-scoped deep links can be resolved only after the server supplies pets.
   restoreRoute();
   seedInitialPastNotifications();
   updatePushStatusUI();
   scheduleNextExactPush();
+}).finally(() => {
+  $('petcare-startup')?.remove();
 });
 
 // Transitional account/PWA handlers share the legacy session until their React migration.
 /* Account security and PWA controls; all data operations use authenticated API. */
-const featureRoot=document.createElement('section');
-featureRoot.className='panel'; featureRoot.id='account-tools';
-featureRoot.innerHTML=`<h2>Безопасность и приложение</h2><div class="row wrap" id="account-actions">
-<button type="button" class="btn" data-security="verify_email">Подтвердить почту</button>
-<button type="button" class="btn" data-security="password_change">Изменить пароль</button>
-<button type="button" class="btn" data-security="email_change">Изменить почту</button>
-<button type="button" class="btn" id="sessions-open">Устройства и входы</button>
-<button type="button" class="btn" id="logout-everywhere">Выйти на всех устройствах</button>
-<button type="button" class="btn" id="export-account">Скачать свои данные</button></div>
-<p id="email-status"></p><p id="plan-status"></p><label><input type="checkbox" id="email-reminders"> Получать напоминания по почте</label><p><button type="button" class="btn primary" id="install-petcare">Установить PetCare</button> <button type="button" class="btn" id="subscribe-push">Уведомления при закрытом сайте</button></p>
-<div id="session-list"></div><div id="server-members"></div><p id="feature-feedback" role="status"></p>`;
-document.querySelector('#settings-security-body')?.append(featureRoot);
-const appBody=document.getElementById('settings-app-body');
-appBody.append(document.getElementById('plan-status'), document.getElementById('install-petcare'));
-const notificationBody=document.getElementById('settings-notifications-body');
-notificationBody.append(document.getElementById('email-reminders').closest('label'),document.getElementById('subscribe-push'));
-document.getElementById('settings-sharing-body').append(document.getElementById('server-members'));
-featureRoot.querySelector('h2').textContent='Доступ и данные';
 const securityDialog=document.createElement('dialog'); securityDialog.id='security-dialog';
-securityDialog.innerHTML=`<form id="security-form" class="panel"><h2 id="security-title">Подтверждение</h2><p id="security-info">Код действует 10 минут.</p>
-<label class="field" id="security-current-wrap">Текущий пароль<input type="password" id="security-current" autocomplete="current-password"></label>
-<label class="field" id="security-email-wrap">Электронная почта<input type="email" id="security-email" autocomplete="email"></label>
-<label class="field" id="security-code-wrap" hidden>Код из письма<input id="security-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
-<label class="field" id="security-new-wrap" hidden>Новый пароль<input type="password" id="security-new" minlength="8" autocomplete="new-password"></label>
-<p id="security-error" role="alert"></p><div class="row"><button class="btn primary" id="security-submit">Получить код</button><button class="btn" type="button" id="security-resend" hidden>Отправить ещё раз</button><button class="btn" type="button" id="security-close">Закрыть</button></div></form>`;
+securityDialog.setAttribute('aria-labelledby', 'security-title');
+securityDialog.innerHTML=("<form id=\"security-form\" class=\"panel\">"+"<h2 id=\"security-title\">"+htmlUiText("Подтверждение")+"</h2>"+"<p id=\"security-info\">"+"</p>"+"\n"+"<div class=\"mail-code-note\" id=\"mail-code-note\" role=\"status\" hidden>"+"\n"+"<strong>"+htmlUiText("Проверьте папку «Спам")+"»"+"</strong>"+"\n"+"<p>"+htmlUiText("Если письмо PetCare там, пожалуйста, отметьте его как «Не спам».")+"</p>"+"\n"+"</div>"+"\n"+"<label class=\"field\" id=\"security-current-wrap\">"+htmlUiText("Текущий пароль")+"<input type=\"password\" id=\"security-current\" autocomplete=\"current-password\">"+"</label>"+"\n"+"<label class=\"field\" id=\"security-email-wrap\">"+htmlUiText("Электронная почта")+"<input type=\"email\" id=\"security-email\" autocomplete=\"email\">"+"</label>"+"\n"+"<label class=\"field\" id=\"security-code-wrap\" hidden>"+htmlUiText("Код из письма")+"<input id=\"security-code\" inputmode=\"numeric\" autocomplete=\"one-time-code\" pattern=\"[0-9]{6}\" maxlength=\"6\">"+"</label>"+"\n"+"<label class=\"field\" id=\"security-new-wrap\" hidden>"+htmlUiText("Новый пароль")+"<input type=\"password\" id=\"security-new\" minlength=\"8\" autocomplete=\"new-password\">"+"</label>"+"\n"+"<p id=\"security-error\" role=\"alert\">"+"</p>"+"<div class=\"row\">"+"<button class=\"btn primary\" id=\"security-submit\">"+htmlUiText("Получить код")+"</button>"+"<button class=\"btn\" type=\"button\" id=\"security-resend\" hidden>"+htmlUiText("Отправить ещё раз")+"</button>"+"<button class=\"btn\" type=\"button\" id=\"security-close\">"+htmlUiText("Закрыть")+"</button>"+"</div>"+"</form>");
 document.body.append(securityDialog);
 let securityPurpose='',securityChallenge='',securityResendAt=0;
 const feedback=(text)=>{
@@ -3461,65 +3562,168 @@ function acceptSession(result){authToken=result.access_token; localStorage.setIt
 function openSecurity(purpose,challenge=''){
  securityPurpose=purpose;securityChallenge=challenge; securityResendAt=Date.now()+60000;
  $('security-form').reset(); $('security-error').textContent='';
- $('security-title').textContent=({register:'Подтверждение регистрации',password_reset:'Восстановление пароля',password_change:'Изменение пароля',email_change:'Изменение почты',verify_email:'Подтверждение почты',delete_account:'Удаление аккаунта'})[purpose];
- $('security-current-wrap').hidden=!['password_change','email_change','delete_account'].includes(purpose);
- $('security-email-wrap').hidden=!['password_reset','email_change'].includes(purpose);
- $('security-info').textContent='Код действует 10 минут. После смены пароля или почты прежние входы будут завершены.';
- if(purpose==='delete_account')$('security-info').textContent='Будут безвозвратно удалены ваш аккаунт, ваши питомцы и их записи. Введите текущий пароль, затем код из почты только если хотите удалить эти данные.';
+ $('security-title').textContent=({register:uiText("Подтверждение регистрации"),password_reset:uiText("Восстановление пароля"),password_change:uiText("Изменение пароля"),email_change:uiText("Изменение почты"),verify_email:uiText("Подтверждение почты"),delete_account:uiText("Удаление аккаунта")})[purpose];
+ $('security-info').textContent=challenge?uiText("Код действует 10 минут."):uiText("Получите код по электронной почте для подтверждения.");
+ if(purpose==='delete_account')$('security-info').textContent=uiText("Будут безвозвратно удалены ваш аккаунт, ваши питомцы и их записи. Введите текущий пароль, затем код из почты только если хотите удалить эти данные.");
  updateSecurityStage(); securityDialog.showModal();
 }
-function updateSecurityStage(){const has=Boolean(securityChallenge);$('security-code-wrap').hidden=!has;$('security-new-wrap').hidden=!(has&&['password_reset','password_change'].includes(securityPurpose));$('security-submit').textContent=has?'Подтвердить':'Получить код';$('security-resend').hidden=!has||securityPurpose==='register';}
+function updateSecurityStage() {
+  const hasCode = Boolean(securityChallenge);
+  $('mail-code-note').hidden = !hasCode;
+  $('security-current-wrap').hidden = hasCode || !['password_change', 'email_change', 'delete_account'].includes(securityPurpose);
+  $('security-email-wrap').hidden = hasCode || !['password_reset', 'email_change'].includes(securityPurpose);
+  $('security-code-wrap').hidden = !hasCode;
+  $('security-new-wrap').hidden = !(hasCode && ['password_reset', 'password_change'].includes(securityPurpose));
+  $('security-submit').textContent = hasCode ? uiText("Подтвердить") : uiText("Получить код");
+  $('security-resend').hidden = !hasCode || securityPurpose === 'register';
+}
 async function requestSecurityCode(){
  const data={purpose:securityPurpose,email:securityPurpose==='password_reset'?$('security-email').value:(state.user.email||'no@example.com'),current_password:$('security-current').value,new_email:$('security-email').value};
- const result=await apiFetch(securityPurpose==='password_reset'?'/auth/codes':'/auth/account-codes',{method:'POST',body:JSON.stringify(data)});securityChallenge=result.challenge_id;securityResendAt=Date.now()+60000;updateSecurityStage();$('security-info').textContent=result.message||'Код отправлен на почту. Проверьте папку «Спам».';
+ const result=await apiFetch(securityPurpose==='password_reset'?'/auth/codes':'/auth/account-codes',{method:'POST',body:JSON.stringify(data)});securityChallenge=result.challenge_id;securityResendAt=Date.now()+60000;updateSecurityStage();$('security-info').textContent = securityPurpose === 'password_reset' ? uiText("Если адрес зарегистрирован, код отправлен. Он действует 10 минут.") : uiText("Код отправлен. Он действует 10 минут.");
+ $('security-code').focus();
 }
-$('security-form').onsubmit=async(e)=>{e.preventDefault();$('security-error').textContent='';$('security-submit').disabled=true;try{if(!securityChallenge){await requestSecurityCode();}else{const result=await apiFetch('/auth/confirm',{method:'POST',body:JSON.stringify({challenge_id:securityChallenge,code:$('security-code').value,new_password:$('security-new').value||null})});if(result.deleted){authToken='';localStorage.removeItem(STORAGE_AUTH_KEY);location.reload();return;}acceptSession(result);securityDialog.close();await syncServerData();feedback('Изменения подтверждены.');}}catch(err){$('security-error').textContent=err.message;}finally{$('security-submit').disabled=false;}};
-$('security-resend').onclick=async()=>{try{if(Date.now()<securityResendAt)throw Error('Повторная отправка доступна через минуту.');await requestSecurityCode();}catch(e){$('security-error').textContent=e.message;}};
+$('security-form').onsubmit = async event => {
+  event.preventDefault();
+  $('security-error').textContent = '';
+  $('security-submit').disabled = true;
+  try {
+    if (!securityChallenge) {
+      await requestSecurityCode();
+      return;
+    }
+    const wasGuest = !hasSession();
+    const result = await apiFetch('/auth/confirm', {
+      method: 'POST',
+      body: JSON.stringify({
+        challenge_id: securityChallenge,
+        code: $('security-code').value,
+        new_password: $('security-new').value || null,
+      }),
+    });
+    if (result.deleted) {
+      clearSession();
+      location.reload();
+      return;
+    }
+    if (result.user?.is_admin) { enterAdmin(result.access_token); return; }
+    acceptSession(result);
+    securityDialog.close();
+    await syncServerData();
+    if (wasGuest) restoreRoute();
+    feedback(uiText("Изменения подтверждены."));
+  } catch (error) {
+    $('security-error').textContent = error.message;
+  } finally {
+    $('security-submit').disabled = false;
+  }
+};
+$('security-resend').onclick=async()=>{try{if(Date.now()<securityResendAt)throw Error(uiText("Повторная отправка доступна через минуту."));await requestSecurityCode();}catch(e){$('security-error').textContent=e.message;}};
 $('security-close').onclick=()=>securityDialog.close();
 document.querySelectorAll('[data-security]').forEach(b=>b.onclick=()=>openSecurity(b.dataset.security));
-const forgot=document.createElement('button');forgot.type='button';forgot.className='btn ghost';forgot.textContent='Забыли пароль?';forgot.onclick=()=>{$('auth-dialog').close();openSecurity('password_reset');};$('auth-form').append(forgot);
-$('sessions-open').onclick=async()=>{try{const list=await apiFetch('/auth/sessions');$('session-list').innerHTML='<h3>Активные входы</h3>'+list.map(s=>`<div class="record">${esc(s.device)} ${s.current?' · это устройство':''}<br>${esc(s.created_at)} <button type="button" class="btn tiny" data-revoke="${esc(s.id)}">Завершить</button></div>`).join('');document.querySelectorAll('[data-revoke]').forEach(b=>b.onclick=async()=>{try{await apiFetch('/auth/sessions/'+b.dataset.revoke,{method:'DELETE'});await $('sessions-open').onclick();}catch(e){feedback(e.message);}});}catch(e){feedback(e.message);}};
+const forgot=document.createElement('button');forgot.type='button';forgot.className='btn ghost';forgot.textContent=uiText("Забыли пароль?");forgot.onclick=()=>{$('auth-dialog').close();openSecurity('password_reset');};$('auth-form').append(forgot);
+$('sessions-open').onclick=async()=>{try{const list=await apiFetch('/auth/sessions');$('session-list').innerHTML=("<h3>"+htmlUiText("Активные входы")+"</h3>")+list.map(s=>`${"<div class=\"record\">"}${esc(s.device)}${" "}${s.current?(" · "+uiText("это устройство")):''}${"<br>"}${esc(s.created_at)}${" "+"<button type=\"button\" class=\"btn tiny\" data-revoke=\""}${esc(s.id)}${"\">"+htmlUiText("Завершить")+"</button>"+"</div>"}`).join('');document.querySelectorAll('[data-revoke]').forEach(b=>b.onclick=async()=>{try{await apiFetch('/auth/sessions/'+b.dataset.revoke,{method:'DELETE'});await $('sessions-open').onclick();}catch(e){feedback(e.message);}});}catch(e){feedback(e.message);}};
 $('logout-everywhere').onclick=async()=>{try{await apiFetch('/auth/logout-all',{method:'POST'});authToken='';localStorage.removeItem(STORAGE_AUTH_KEY);location.reload();}catch(e){feedback(e.message);}};
 $('export-account').onclick=async()=>{try{const result=await apiFetch('/account/export');const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='petcare-export.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message);}};
 let installPrompt;
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;});
-$('install-petcare').onclick=async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else if(matchMedia('(display-mode: standalone)').matches){feedback('PetCare уже открыт как приложение.');}else{feedback(/iPhone|iPad|iPod/.test(navigator.userAgent)?'В Safari нажмите «Поделиться» → «На экран Домой» → «Добавить».':'Откройте меню браузера → «Установить приложение» или «Добавить на главный экран».');}};
-if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>feedback('Не удалось подготовить установку приложения. Проверьте сеть и HTTPS.'));
+const installedDisplay = matchMedia('(display-mode: standalone)');
+const installDialog = $('install-dialog');
+const installPlatforms = Array.from(installDialog.querySelectorAll('input[name="install-platform"]'));
+const isAndroid = /Android/i.test(navigator.userAgent);
+
+function updateInstallStatus(installed = installedDisplay.matches || navigator.standalone === true) {
+  $('install-petcare').hidden = installed;
+  $('install-summary').textContent = installed
+    ? uiText("PetCare уже установлен и открыт как приложение.")
+    : uiText("Открывайте приложение прямо с экрана устройства.");
+}
+
+function updateWebInstall() {
+  $('install-web').hidden = !installPrompt;
+  $('install-web-help').hidden = Boolean(installPrompt);
+}
+
+async function checkAndroidDownload() {
+  const download = $('install-apk');
+  const status = $('install-apk-status');
+  try {
+    const response = await fetch(download.href, { method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    const type = response.headers.get('content-type')?.split(';')[0];
+    const available = response.ok && ['application/vnd.android.package-archive', 'application/octet-stream'].includes(type);
+    download.hidden = !available;
+    status.hidden = available;
+    if (!available) status.textContent = uiText("APK для Android пока недоступен.");
+  } catch {
+    download.hidden = true;
+    status.hidden = false;
+    status.textContent = uiText("Не удалось проверить доступность APK. Проверьте подключение.");
+  }
+}
+
+function selectInstallPlatform(platform) {
+  const android = platform === 'android';
+  installPlatforms.forEach(input => { input.checked = input.value === platform; });
+  $('install-android').hidden = !android;
+  $('install-iphone').hidden = android;
+}
+
+function openInstallGuide() {
+  const appleDevice = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  selectInstallPlatform(isAndroid || (!appleDevice && installPrompt) ? 'android' : 'iphone');
+  updateWebInstall();
+  installDialog.showModal();
+  checkAndroidDownload();
+}
+
+installPlatforms.forEach(input => input.addEventListener('change', () => selectInstallPlatform(input.value)));
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  updateWebInstall();
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  if (installDialog.open) installDialog.close();
+  updateInstallStatus(true);
+});
+installedDisplay.addEventListener('change', () => updateInstallStatus());
+$('install-close').onclick = () => installDialog.close();
+$('install-petcare').onclick = openInstallGuide;
+$('install-web').onclick = async () => {
+  const prompt = installPrompt;
+  if (!prompt) return;
+  installPrompt = null;
+  try {
+    await prompt.prompt();
+    if ((await prompt.userChoice)?.outcome === 'accepted') {
+      if (installDialog.open) installDialog.close();
+      updateInstallStatus(true);
+    }
+  } catch {
+    feedback(uiText("Запустите установку из меню браузера."));
+  } finally {
+    updateWebInstall();
+  }
+};
+updateInstallStatus();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>feedback(uiText("Не удалось подготовить установку приложения. Проверьте сеть и HTTPS.")));
 function base64Key(value){return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4)),c=>c.charCodeAt(0));}
 $('subscribe-push').onclick=async()=>{try{
- if(!('serviceWorker'in navigator)||!('PushManager'in window))throw Error('Этот браузер не поддерживает push. На iPhone сначала установите PetCare на главный экран.');
- const config=await apiFetch('/notifications/config');if(!config.configured||!config.public_key)throw Error('Сервер уведомлений ещё не настроен.');
- if(await Notification.requestPermission()!=='granted')throw Error('Разрешите уведомления в настройках браузера.');
+ if(!('serviceWorker'in navigator)||!('PushManager'in window))throw Error(uiText("Этот браузер не поддерживает push. На iPhone сначала установите PetCare на главный экран."));
+ const config=await apiFetch('/notifications/config');if(!config.configured||!config.public_key)throw Error(uiText("Сервер уведомлений ещё не настроен."));
+ if(await Notification.requestPermission()!=='granted')throw Error(uiText("Разрешите уведомления в настройках браузера."));
  const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64Key(config.public_key)});
- await apiFetch('/notifications/subscribe',{method:'POST',body:JSON.stringify(sub.toJSON())}); window.petcareServerPush=true;feedback('Серверные уведомления подключены на этом устройстве.');
+ await apiFetch('/notifications/subscribe',{method:'POST',body:JSON.stringify(sub.toJSON())}); window.petcareServerPush=true;feedback(uiText("Серверные уведомления подключены на этом устройстве."));
  }catch(e){feedback(e.message);}};
 async function refreshMembers(){
  const p=pet();$('server-members').innerHTML='';if(!p||p.ownerId!==state.user.id)return;
  const list=await apiFetch('/pets/'+p.serverId+'/members');
- $('server-members').innerHTML='<h3>Доступ к питомцу</h3>'+list.map(m=>`<div class="record">${esc(m.name)} · ${esc(m.email)} · ${m.role==='viewer'?'Просмотр':'Редактор'} · ${esc(m.expires_at||'Без срока')} <button type="button" class="btn tiny" data-remove-member="${m.id}">Отозвать доступ</button></div>`).join('')+'<button type="button" class="btn" id="rotate-invite">Перевыпустить код приглашения</button>';
+ $('server-members').innerHTML=("<h3>"+htmlUiText("Доступ к питомцу")+"</h3>")+list.map(m=>`${"<div class=\"record\">"}${esc(m.name)}${" · "}${esc(m.email)}${" · "}${m.role==='viewer'?'Просмотр':'Редактор'}${" · "}${esc(m.expires_at||uiText("Без срока"))}${" "+"<button type=\"button\" class=\"btn tiny\" data-remove-member=\""}${m.id}${"\">"+htmlUiText("Отозвать доступ")+"</button>"+"</div>"}`).join('')+("<button type=\"button\" class=\"btn\" id=\"rotate-invite\">"+htmlUiText("Перевыпустить код приглашения")+"</button>");
  document.querySelectorAll('[data-remove-member]').forEach(b=>b.onclick=async()=>{try{await apiFetch(`/pets/${p.serverId}/members/${b.dataset.removeMember}`,{method:'DELETE'});await refreshMembers();}catch(e){feedback(e.message);}});
- $('rotate-invite').onclick=async()=>{try{const r=await apiFetch('/pets/'+p.serverId+'/rotate-code',{method:'POST'});p.shareCode=r.share_code;render();await refreshMembers();feedback('Новый код готов. Старый код больше не работает; уже выданные права сохранены.');}catch(e){feedback(e.message);}};
+ $('rotate-invite').onclick=async()=>{try{const r=await apiFetch('/pets/'+p.serverId+'/rotate-code',{method:'POST'});p.shareCode=r.share_code;render();await refreshMembers();feedback(uiText("Новый код готов. Старый код больше не работает; уже выданные права сохранены."));}catch(e){feedback(e.message);}};
 }
 const originalRenderProfile=renderProfile;
 renderProfile=function(){originalRenderProfile();if(authToken)refreshMembers().catch(e=>feedback(e.message));};
-const deleteAccountButton=document.createElement('button');deleteAccountButton.type='button';deleteAccountButton.className='btn danger';deleteAccountButton.textContent='Удалить аккаунт и своих питомцев';deleteAccountButton.onclick=()=>openSecurity('delete_account');$('account-actions').append(deleteAccountButton);
-const adminPanel=document.createElement('section');adminPanel.className='panel';adminPanel.id='admin-panel';adminPanel.hidden=true;
-adminPanel.innerHTML='<h2>Администрирование</h2><div id="admin-stats"></div><label class="field">Поиск по имени или почте<input id="admin-search" type="search"></label><button type="button" class="btn" id="admin-refresh">Показать пользователей</button><div id="admin-users"></div><button type="button" class="btn" id="admin-next">Следующая страница</button><button type="button" class="btn" id="admin-audit-button">Журнал действий</button><div id="admin-audit"></div>';featureRoot.after(adminPanel);
-let adminOffset=0;
-async function loadAdmin(){
- const me=await apiFetch('/auth/me');featureRoot.querySelector('[data-security=verify_email]').hidden=Boolean(me.email_verified);$('plan-status').textContent=me.premium?'Расширенный доступ: ИИ и больше трёх питомцев.':'Бесплатный доступ: до трёх питомцев. ИИ доступен в платной версии; доступ выдаёт администратор.';$('email-reminders').checked=Boolean(state.settings.emailEnabled);$('email-status').textContent=me.email_verified?'Почта подтверждена':'Подтвердите почту для восстановления доступа. Администратору сначала нужно указать настоящую почту через «Изменить почту».';
- adminPanel.hidden=!me.is_admin;if(!me.is_admin)return;
- const stats=await apiFetch('/admin/status');$('admin-stats').textContent=`Пользователей: ${stats.users}, питомцев: ${stats.pets}, документов: ${stats.documents}. Почта: ${stats.smtp_configured?'подключена':'не подключена'}, ИИ: ${stats.ocr_configured?'подключён':'нужен API-ключ'}, Push: ${stats.push_configured?'ключи созданы':'не настроен'}.`;
- const r=await apiFetch('/admin/users?offset='+adminOffset+'&search='+encodeURIComponent($('admin-search').value));
- $('admin-users').innerHTML=r.users.map(u=>`<article class="record"><strong>${esc(u.full_name)}</strong> · ${esc(u.email)} · питомцев: ${u.pet_count}<p>${u.disabled?'Заблокирован':'Активен'} · ${u.premium?'Платный доступ '+esc(u.premium_until||'бессрочно'):'Бесплатный: до 3 питомцев'}</p><button type="button" class="btn tiny" data-premium="${u.id}">Доступ на 30 дней</button> <button type="button" class="btn tiny" data-permanent="${u.id}">Бессрочный доступ</button> <button type="button" class="btn tiny" data-free="${u.id}">Отозвать платный доступ</button> <button type="button" class="btn tiny" data-user-sessions="${u.id}">Завершить входы</button> ${u.is_admin?'':`<button type="button" class="btn tiny" data-block="${u.id}" data-blocked="${u.disabled}">${u.disabled?'Разблокировать':'Блокировать'}</button>`}</article>`).join('');
- $('admin-next').hidden=adminOffset+100>=r.total;
- for(const [attr,path,body] of [['premium','premium',{enabled:true,days:30}],['permanent','premium',{enabled:true}],['free','premium',{enabled:false}]])document.querySelectorAll('[data-'+attr+']').forEach(b=>b.onclick=async()=>{try{await apiFetch(`/admin/users/${b.dataset[attr]}/${path}`,{method:'PATCH',body:JSON.stringify(body)});await loadAdmin();}catch(e){feedback(e.message);}});
- document.querySelectorAll('[data-user-sessions]').forEach(b=>b.onclick=async()=>{try{await apiFetch(`/admin/users/${b.dataset.userSessions}/revoke-sessions`,{method:'POST'});feedback('Входы завершены.');}catch(e){feedback(e.message);}});
- document.querySelectorAll('[data-block]').forEach(b=>b.onclick=async()=>{try{await apiFetch(`/admin/users/${b.dataset.block}/blocked`,{method:'PATCH',body:JSON.stringify({blocked:b.dataset.blocked!=='true'})});await loadAdmin();}catch(e){feedback(e.message);}});
-}
-$('admin-refresh').onclick=()=>{adminOffset=0;loadAdmin().catch(e=>feedback(e.message));};$('admin-next').onclick=()=>{adminOffset+=100;loadAdmin().catch(e=>feedback(e.message));};
-$('admin-audit-button').onclick=async()=>{try{const r=await apiFetch('/admin/audit');$('admin-audit').innerHTML=r.map(x=>`<p>${esc(x.at)} · админ ${x.actor_id} · пользователь ${x.target_id} · ${esc(x.action)}</p>`).join('');}catch(e){feedback(e.message);}};
-const profileWithMembers=renderProfile;renderProfile=function(){profileWithMembers();if(authToken)loadAdmin().catch(e=>feedback(e.message));else adminPanel.hidden=true;};
 
 if('serviceWorker' in navigator)navigator.serviceWorker.ready.then(async r=>{window.petcareServerPush=Boolean(await r.pushManager.getSubscription());}).catch(()=>{});
 
