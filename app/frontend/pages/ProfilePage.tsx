@@ -2,6 +2,7 @@ import { uiText } from '../i18n';
 import { LanguagePicker } from '../i18n/LanguagePicker';
 import { ThemePicker } from '../features/appearance/ThemePicker';
 import { PremiumPlan } from '../features/billing/PremiumPlan';
+import { BetaFeedbackButton } from '../components/BetaFeedback';
 
 export function ProfilePage() {
   return (
@@ -75,6 +76,13 @@ export function ProfilePage() {
             </div>
           </div>
         </details>
+      </div>
+      <div className="panel profile-feedback">
+        <div>
+          <h2>{uiText('PetCare в бета-тесте')}</h2>
+          <p>{uiText('Нашли ошибку или знаете, как сделать PetCare удобнее?')}</p>
+        </div>
+        <BetaFeedbackButton />
       </div>
       <button className="btn ghost profile-logout" id="api-logout" type="button">{uiText("Выйти из аккаунта")}</button>
       <div id="undo-area" />

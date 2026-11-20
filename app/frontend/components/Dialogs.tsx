@@ -1,8 +1,11 @@
 import { uiText } from '../i18n';
+import { Brand } from './Brand';
+import { BetaFeedbackDialog } from './BetaFeedback';
 
 export function Dialogs() {
   return (
     <>
+      <BetaFeedbackDialog />
       <dialog id="editor" aria-labelledby="editor-title" aria-describedby="editor-context">
         <div className="editor-close-bar"><button type="button" id="close-editor" className="modal-close" aria-label={uiText("Закрыть карточку или форму")} /></div>
         <form id="editor-form">
@@ -16,15 +19,20 @@ export function Dialogs() {
           </div>
         </form>
       </dialog>
+      <dialog id="pet-discard-dialog" aria-labelledby="pet-discard-title" aria-describedby="pet-discard-message">
+        <div id="pet-discard-art" aria-hidden="true" />
+        <h2 id="pet-discard-title">{uiText('Закрыть форму без сохранения изменений?')}</h2>
+        <p id="pet-discard-message">{uiText('Введённые данные о питомце будут потеряны.')}</p>
+        <div className="pet-discard-actions">
+          <button id="pet-discard-continue" type="button" className="btn primary">{uiText('Продолжить заполнение')}</button>
+          <button id="pet-discard-confirm" type="button" className="btn ghost">{uiText('Закрыть без сохранения')}</button>
+        </div>
+      </dialog>
       <dialog id="auth-dialog" className="auth-dialog" aria-labelledby="auth-dialog-title">
         <button type="button" id="close-auth-dialog" className="modal-close" aria-label={uiText("Закрыть окно входа")} />
         <div className="auth-header">
           <div className="auth-logo">
-            <span className="brand-mark" aria-hidden="true" />
-            petcare
-            <span className="brand-dot">
-              .
-            </span>
+            <Brand />
           </div>
           <h2 id="auth-dialog-title" className="auth-title">{uiText("Вход в PetCare")}</h2>
           <p className="auth-sub">{uiText("Единый сервис заботы о здоровье, питании и совместном уходе за питомцами")}</p>
@@ -82,7 +90,7 @@ export function Dialogs() {
             <small id="picker-direct-hint">{uiText("Например, 25.12.2026. Или выберите день в календаре.")}</small>
           </label>
           <div id="picker-calendar" role="grid" aria-label={uiText("Календарь")} />
-          <div className="picker-shortcuts">
+          <div className="picker-shortcuts" id="picker-date-shortcuts">
             <button type="button" className="btn" data-relative-day="0">{uiText("Сегодня")}</button>
             <button type="button" className="btn" data-relative-day="1">{uiText("Завтра")}</button>
             <button type="button" className="btn" data-relative-day="7">{uiText("Через неделю")}</button>
@@ -108,15 +116,6 @@ export function Dialogs() {
             </div>
           </div>
           <p className="picker-sr" id="picker-wheel-help">{uiText("Прокрутите колонку или используйте стрелки вверх и вниз. Home — начало, End — конец.")}</p>
-          <details id="picker-manual-time" className="manual-time">
-            <summary>{uiText("Ввести время вручную")}</summary>
-            <div className="manual-time-fields">
-              <label className="field" htmlFor="picker-hour">{uiText("Часы")}<input id="picker-hour" type="number" min="0" max="23" step="1" inputMode="numeric" defaultValue="9" />
-              </label>
-              <label className="field" htmlFor="picker-minute">{uiText("Минуты")}<input id="picker-minute" type="number" min="0" max="59" step="1" inputMode="numeric" defaultValue="0" />
-              </label>
-            </div>
-          </details>
           <div className="picker-shortcuts">
             <button type="button" className="btn" data-preset-time="08:00">{uiText("Утро · 08:00")}</button>
             <button type="button" className="btn" data-preset-time="13:00">{uiText("День · 13:00")}</button>

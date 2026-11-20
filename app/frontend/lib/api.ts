@@ -30,10 +30,12 @@ function errorMessage(data: unknown, status: number): string {
 export class ApiError extends Error {
   readonly status: number;
   readonly support: string;
+  readonly reason: string;
   constructor(status: number, data: unknown) {
     super(errorMessage(data, status));
     this.status = status;
     const detail = isRecord(data) ? data.detail : null;
+    this.reason = isRecord(detail) && typeof detail.reason === 'string' ? detail.reason : '';
     this.support = isRecord(detail) && typeof detail.support_contact === 'string' ? detail.support_contact : '';
   }
 }
@@ -53,7 +55,7 @@ export function createApiClient({ getToken, onUnauthorized, onMutationError }: A
       const response = await fetch('/api/v1' + endpoint, { ...options, headers });
       if (response.status === 204) return null;
       const data: unknown = await response.json().catch(() => null);
-      if (response.status === 401 && endpoint !== '/auth/login') onUnauthorized();
+      if (response.status === 401 && endpoint !== '/auth/login' && token === getToken()) onUnauthorized();
       if (!response.ok) throw new ApiError(response.status, data);
       return data as T;
     } catch (cause) {

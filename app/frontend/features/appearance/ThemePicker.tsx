@@ -75,7 +75,7 @@ export function ThemePicker() {
           </label>
         ))}
       </div>
-      <p className="theme-feedback" role="status">{feedback || uiText("Тема сохраняется в вашем аккаунте.")}</p>
+      <p className="theme-feedback" role="status">{feedback || uiText("Тема сохраняется на этом устройстве и в вашем аккаунте.")}</p>
     </section>
   );
 }

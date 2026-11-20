@@ -1,18 +1,20 @@
 import { uiText } from '../i18n';
 
 import { LockIcon } from './GuestPreview';
+import { BrandName } from './Brand';
+import { openBetaFeedback } from './BetaFeedback';
 
 export function Sidebar() {
   return (
     <>
       <aside className="sidebar" aria-label={uiText("Навигация")}>
-        <a className="brand" href="#/pets">
+        <button className="brand" type="button" aria-haspopup="dialog" aria-controls="beta-feedback-dialog" onClick={openBetaFeedback}>
           <span className="brand-mark" aria-hidden="true" />
-          petcare
-          <span className="brand-dot">
-            .
+          <span className="brand-support">
+            <BrandName />
+            <span className="brand-support-label">{uiText('Поддержка')}</span>
           </span>
-        </a>
+        </button>
         <button className="all-pets" data-route="pets" data-guest-lock type="button">
           <svg aria-hidden="true">
             <use href="#paw" />

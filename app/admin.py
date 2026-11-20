@@ -16,6 +16,7 @@ from database import get_db
 from features import Registration, delete_account_data, enforce_quota, password_ok, public_email, user_json
 from login_guard import IP_LIMIT, account_key, insert_if_absent, support_contact
 import models
+from premium_pricing import PremiumPrices, premium_prices, set_premium_prices
 from server_metrics import server_metrics
 
 
@@ -266,6 +267,17 @@ def install_admin(app):
         audit(db, actor, user_id, 'revoke_sessions')
         db.commit()
         return {'status': 'ok'}
+
+    @router.get('/premium-prices')
+    def get_premium_prices(actor=Depends(require_admin), db=Depends(get_db)):
+        return {'prices': premium_prices(db)}
+
+    @router.put('/premium-prices')
+    def update_premium_prices(data: PremiumPrices, actor=Depends(require_admin), db=Depends(get_db)):
+        set_premium_prices(db, data)
+        audit(db, actor, actor.id, 'update_premium_prices')
+        db.commit()
+        return data
 
     @router.get('/settings')
     def get_settings(actor=Depends(require_admin), db=Depends(get_db)):

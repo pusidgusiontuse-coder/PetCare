@@ -2,6 +2,9 @@ import { language, uiText } from './i18n';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { App } from './App';
+import { installCustomSelects } from './components/customSelect';
+
+installCustomSelects();
 
 document.documentElement.lang = language;
 document.title = uiText(document.title);

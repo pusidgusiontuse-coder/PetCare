@@ -83,7 +83,7 @@ function NutritionContent({ entries, onAdd }: { entries: readonly FoodEntry[]; o
           <select id="compare-b" aria-label={uiText("Второй корм")} value={b} onChange={event => changeSelection(1, Number(event.target.value))}>{groups.map((group, index) => <option key={group[0].id} value={index}>{group[group.length - 1].food}</option>)}</select>
         </div>
         <div id="comparison" className="table-wrap">
-          {first && second ? <table className="compare"><thead><tr><th scope="col">{uiText("Параметр")}</th><th scope="col">{first.name}</th><th scope="col">{second.name}</th></tr></thead><tbody>{comparisonRows.map(([label, key]) => <tr key={key}><th scope="row">{label}</th><td>{first[key]}</td><td>{second[key]}</td></tr>)}</tbody></table> : <><p className="empty">{uiText("Добавьте ещё")+" "}{groups.length ? uiText("один корм") : uiText("два корма")}{" "+uiText("для сравнения.")}</p><button type="button" className="btn tiny" id="add-comparison-food" onClick={onAdd}>{uiText("Добавить корм")}</button></>}
+          {first && second ? <table className="compare"><thead><tr><th scope="col">{uiText("Параметр")}</th><th scope="col">{first.name}</th><th scope="col">{second.name}</th></tr></thead><tbody>{comparisonRows.map(([label, key]) => <tr key={key}><th scope="row">{label}</th><td>{first[key]}</td><td>{second[key]}</td></tr>)}</tbody></table> : <p className="empty">{uiText("Добавьте ещё")+" "}{groups.length ? uiText("один корм") : uiText("два корма")}{" "+uiText("для сравнения.")}</p>}
         </div>
       </div>
   </div>;
@@ -91,7 +91,7 @@ function NutritionContent({ entries, onAdd }: { entries: readonly FoodEntry[]; o
 
 export function NutritionTools() {
   const snapshot = useSyncExternalStore(subscribeNutrition, getNutritionSnapshot, getNutritionSnapshot);
-  return <details className="secondary-details food-tools">
+  return <details className="secondary-details food-tools" open>
     <summary>{uiText("Подбор и сравнение кормов")}</summary>
     <NutritionContent key={snapshot.resetVersion} entries={snapshot.entries} onAdd={snapshot.onAdd} />
   </details>;

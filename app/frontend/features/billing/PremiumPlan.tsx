@@ -1,18 +1,14 @@
-import { language, uiText } from '../../i18n';
+import { formatLocale, language, uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createApiClient } from '../../lib/api';
+import { ApiError, createApiClient } from '../../lib/api';
 import './premium.css';
 
-const monthlyPrice = 99;
-const periods = [
-  { months: 1, label: (uiText("1 месяц")), price: monthlyPrice },
-  { months: 3, label: (uiText("3 месяца")), price: 259 },
-  { months: 6, label: (uiText("6 месяцев")), price: 499 },
-  { months: 12, label: (uiText("12 месяцев")), price: 999 },
-];
+import { periods, type Prices } from './periods';
+
+const priceFormat = new Intl.NumberFormat(formatLocale);
 
 type Payment = { status: 'pending' | 'succeeded' | 'canceled'; url?: string };
-type Plans = { enabled: boolean; test: boolean; prices: Record<number, number> };
+type Plans = { enabled: boolean; test: boolean; prices: Prices };
 const api = createApiClient({
   getToken: () => localStorage.getItem('petcare_jwt') ?? '',
   onUnauthorized: () => {},
@@ -21,18 +17,19 @@ const api = createApiClient({
 
 export function PremiumPlan() {
   const dialog = useRef<HTMLDialogElement>(null);
-  const attempt = useRef<{ months: number; id: string } | null>(null);
-  const [months, setMonths] = useState(1);
+  const attempt = useRef<{ months: number; price: number; id: string } | null>(null);
+  const [months, setMonths] = useState<keyof Prices>(1);
   const [plans, setPlans] = useState<Plans | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [pendingOrder, setPendingOrder] = useState('');
-  const options = periods.map(period => ({ ...period, price: plans?.prices[period.months] ?? period.price }));
-  const selected = options.find(period => period.months === months) ?? options[0];
+  const selected = periods.find(period => period.months === months) ?? periods[0];
 
   const show = useCallback(async () => {
     if (dialog.current && !dialog.current.open) dialog.current.showModal();
-    try { setPlans(await api<Plans>('/billing/plans')); }
+    setPlans(null);
+    setMessage('');
+    try { setPlans(await api<Plans>('/billing/plans', { cache: 'no-store' })); }
     catch { setMessage(uiText("Не удалось загрузить настройки оплаты.")); }
   }, []);
 
@@ -73,19 +70,24 @@ export function PremiumPlan() {
 
   async function pay() {
     if (!plans?.enabled || busy) return;
-    if (!attempt.current || attempt.current.months !== months) {
-      attempt.current = { months, id: crypto.randomUUID() };
+    const price = plans.prices[months];
+    if (!attempt.current || attempt.current.months !== months || attempt.current.price !== price) {
+      attempt.current = { months, price, id: crypto.randomUUID() };
     }
     const orderId = attempt.current.id;
     setMessage('');
     setBusy(true);
     try {
       const result = await api<Payment>('/billing/checkout', {
-        method: 'POST', body: JSON.stringify({ months, order_id: orderId }),
+        method: 'POST', body: JSON.stringify({ months, order_id: orderId, quoted_price: price }),
       });
       if (result?.status === 'pending' && result.url) location.assign(result.url);
       else updatePayment(result, orderId);
     } catch (error) {
+      if (error instanceof ApiError && error.reason === 'premium_price_changed') {
+        attempt.current = null;
+        await show();
+      }
       setMessage(error instanceof Error ? error.message : uiText("Не удалось открыть оплату."));
     } finally {
       setBusy(false);
@@ -106,17 +108,18 @@ export function PremiumPlan() {
         </form>
         <h2 id="premium-title">PetCare Premium</h2>
         <p className="premium-intro">{uiText("Добавляйте больше трёх питомцев.")}</p>
-        <fieldset className="premium-periods" disabled={busy}>
+        {plans && <><fieldset className="premium-periods" disabled={busy}>
           <legend>{uiText("Выберите период")}</legend>
-          {options.map(period => {
-            const discount = Math.round(100 * (1 - period.price / (options[0].price * period.months)));
+          {periods.map(period => {
+            const price = plans.prices[period.months];
+            const discount = Math.round(100 * (1 - price / (plans.prices[1] * period.months)));
             return (
               <label className="premium-option" key={period.months}>
                 <input type="radio" name="premium-months" value={period.months} checked={months === period.months}
                   onChange={() => setMonths(period.months)} />
                 <span className="premium-option-body">
                   <span>{period.label}</span>
-                  <strong>{period.price} ₽</strong>
+                  <strong>{priceFormat.format(price)} ₽</strong>
                   {discount > 0 && <small>{uiText("Скидка")+" "}{discount}%</small>}
                 </span>
               </label>
@@ -124,8 +127,9 @@ export function PremiumPlan() {
           })}
         </fieldset>
         <div className="premium-total" aria-live="polite">
-          <span>{uiText("За")+" "}{selected.label}</span><strong>{selected.price} ₽</strong>
-        </div>
+          <span>{uiText("За")+" "}{selected.label}</span><strong>{priceFormat.format(plans.prices[months])} ₽</strong>
+        </div></>}
+        {!plans && message && <button className="btn premium-pay" type="button" onClick={() => void show()}>{uiText("Повторить")}</button>}
         <button className="btn primary premium-pay" type="button" disabled={!plans?.enabled || busy || Boolean(pendingOrder)}
           aria-describedby="premium-payment-status" onClick={() => void pay()}>
           {plans?.test ? uiText("Открыть тестовую оплату") : uiText("Перейти к оплате")}
@@ -133,7 +137,7 @@ export function PremiumPlan() {
         {pendingOrder && <button className="btn premium-pay" type="button" disabled={busy}
           onClick={() => void check(pendingOrder)}>{uiText("Проверить оплату")}</button>}
         <p className="premium-payment-status" role="status" id="premium-payment-status">
-          {message || (plans?.enabled ? uiText("Оплата разовая. Автопродления нет.") : uiText("Оплата через ЮKassa пока недоступна."))}
+          {message || (!plans ? uiText("Загружаем…") : plans.enabled ? uiText("Оплата разовая. Автопродления нет.") : uiText("Оплата через ЮKassa пока недоступна."))}
         </p>
         <p className="premium-payment-status"><a href={language === 'en' ? '/premium?lang=en' : '/premium'} target="_blank" rel="noopener">{uiText("Условия Premium")}</a></p>
       </dialog>
