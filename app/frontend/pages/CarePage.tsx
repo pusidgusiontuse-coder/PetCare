@@ -12,6 +12,7 @@ export function CarePage() {
           </div>
           <button className="btn primary" data-extra-modal="reminder" type="button">{"+ "+uiText("Напоминание")}</button>
         </div>
+        <div id="care-pet-preview" className="care-pet-preview" />
         <div className="panel glass">
           <div className="panel-head">
             <h2>{uiText("Расписание")}</h2>

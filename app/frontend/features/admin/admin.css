@@ -119,3 +119,25 @@
   border-top: 1px solid #364849;
 }
 .admin-account-form p { margin: 0; }
+
+.admin-price-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.admin-price-grid input { min-width: 0; width: 100%; }
+
+:is(.admin-shell, .admin-login) .petcare-select-options {
+  --surface: var(--admin-panel);
+  --line: var(--admin-line);
+  --ink: var(--admin-text);
+  --soft: #263a31;
+  --accent-dark: var(--admin-accent);
+}
+:is(.admin-shell, .admin-login) .petcare-select-options > button {
+  border: 0;
+  background: transparent;
+}
+:is(.admin-shell, .admin-login) .petcare-select-options > button:is(:hover,[data-active=true]) {
+  background: var(--soft);
+}

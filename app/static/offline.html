@@ -7,22 +7,13 @@
   <section lang="ru">
     <h1>Нет подключения к интернету</h1>
     <p>Подключитесь к сети, чтобы открыть PetCare и сохранить изменения.</p>
-    <button onclick="location.reload()">Повторить</button>
+    <a href="">Повторить</a>
   </section>
   <section lang="en" hidden>
     <h1>You’re offline</h1>
     <p>Reconnect to the internet to open PetCare and save your changes.</p>
-    <button onclick="location.reload()">Try again</button>
+    <a href="">Try again</a>
   </section>
-  <script>
-    let preference;
-    try { preference = localStorage.getItem('petcare.language'); } catch {}
-    const preferred = (navigator.languages?.length ? navigator.languages : [navigator.language])
-      .map(locale => locale.toLowerCase().split(/[-_]/)[0])
-      .find(language => language === 'ru' || language === 'en');
-    const language = preference === 'ru' || preference === 'en' ? preference : preferred ?? 'en';
-    document.documentElement.lang = language;
-    document.querySelectorAll('section').forEach(section => { section.hidden = section.lang !== language; });
-  </script>
+  <script src="/static/offline.js"></script>
 </body>
 </html>

@@ -1267,6 +1267,24 @@ def get_all_reminders(
     return query.order_by(models.Reminder.due_date.asc()).all()
 
 
+@app.get("/api/v1/pets/{pet_id}/shared-care", response_model=Optional[List[schemas.ReminderOut]])
+def shared_care_reminders(
+    pet_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    pet = get_user_pet_or_404(pet_id, current_user.id, db)
+    sharing_active = db.query(models.PetMember.id).filter(
+        models.PetMember.pet_id == pet_id,
+        models.PetMember.user_id != pet.owner_id,
+        models.PetMember.role.in_(["viewer", "editor", "co_owner"]),
+        or_(models.PetMember.expires_at.is_(None), models.PetMember.expires_at > datetime.utcnow()),
+    ).first()
+    if not sharing_active:
+        return None
+    return db.query(models.Reminder).filter_by(pet_id=pet_id).order_by(models.Reminder.id).all()
+
+
 @app.post("/api/v1/pets/{pet_id}/reminders", response_model=schemas.ReminderOut, status_code=status.HTTP_201_CREATED, tags=["Уход и напоминания"], summary="Создать напоминание по уходу")
 def create_reminder(
     pet_id: int,

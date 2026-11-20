@@ -1,8 +1,10 @@
 import { formatLocale, uiText } from '../../i18n';
 import { LanguagePicker } from '../../i18n/LanguagePicker';
+import { BrandName } from '../../components/Brand';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ApiError, createApiClient } from '../../lib/api';
 import { appendSample, ServerMetrics, type Stats } from './ServerMetrics';
+import { maxPremiumPrice, periods, type Prices } from '../billing/periods';
 import './admin.css';
 
 const PAGE = 50;
@@ -22,7 +24,7 @@ type Login = { access_token: string; user: User };
 type History = { sessions: Session[]; total: number };
 type Audit = { actor_id: number; target_id: number; action: string; at: string };
 type Block = { ip_address: string; blocked_at: string; failures: number };
-type View = 'users' | 'settings' | 'blocks' | 'audit';
+type View = 'users' | 'premium' | 'settings' | 'blocks' | 'audit';
 type AccountAction = 'edit' | 'password' | 'delete';
 
 const dateTime = (value: string | null) => {
@@ -48,6 +50,7 @@ export function AdminApp() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [support, setSupport] = useState('');
+  const [prices, setPrices] = useState<Prices | null>(null);
   const [samples, setSamples] = useState<Stats[]>([]);
   const [refreshError, setRefreshError] = useState(false);
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -72,6 +75,7 @@ export function AdminApp() {
     setHistory(null);
     setBlocks([]);
     setAudit([]);
+    setPrices(null);
     setAccountAction(null);
   }, []);
   const api = useMemo(() => createApiClient({ getToken: () => token.current, onUnauthorized: forget, onMutationError: () => {} }), [forget]);
@@ -216,6 +220,13 @@ export function AdminApp() {
     setAccountAction(null);
     setError('');
     setNotice('');
+    if (next === 'premium') {
+      setPrices(null);
+      void task(async () => {
+        const data = await api<{ prices: Prices }>('/admin/premium-prices', { cache: 'no-store' });
+        if (data) setPrices(data.prices);
+      });
+    }
     if (next === 'blocks') void task(() => refreshBlocks());
     if (next === 'settings') void task(async () => {
       const data = await api<Contact>('/admin/settings');
@@ -265,7 +276,7 @@ export function AdminApp() {
   if (!actor) return (
     <main className="admin-login">
       <div className="admin-login-card">
-        <p className="admin-kicker">PETCARE</p>
+        <p className="admin-kicker"><BrandName /></p>
         <LanguagePicker />
         <h1>{uiText("Вход администратора")}</h1>
         <form onSubmit={login} className="admin-fields">
@@ -283,10 +294,10 @@ export function AdminApp() {
 
   return <div className="admin-shell">
     <aside className="admin-nav">
-      <span className="admin-kicker">PETCARE</span><LanguagePicker />
+      <span className="admin-kicker"><BrandName /></span><LanguagePicker />
       <strong>{uiText("Управление")}</strong>
       <nav aria-label={uiText("Разделы панели")}>
-        {([['users', uiText("Пользователи")], ['settings', uiText("Настройки")], ['blocks', uiText("Блокировки IP")], ['audit', uiText("Журнал действий")]] as const).map(([key, label]) =>
+        {([['users', uiText("Пользователи")], ['premium', uiText("Тарифы Premium")], ['settings', uiText("Настройки")], ['blocks', uiText("Блокировки IP")], ['audit', uiText("Журнал действий")]] as const).map(([key, label]) =>
           <button key={key} type="button" aria-current={view === key ? 'page' : undefined} onClick={() => openView(key)}>{label}</button>)}
       </nav>
       <button type="button" disabled={busy} onClick={() => void task(async () => {
@@ -426,6 +437,28 @@ export function AdminApp() {
         {!users.length && <p className="admin-muted">{uiText("Пользователи не найдены.")}</p>}
         <Pager total={total} offset={offset} busy={busy} onPage={page => void task(() => refreshUsers(page, search))} />
       </section>}
+      {view === 'premium' && <section className="admin-panel">
+        <h2>{uiText('Тарифы Premium')}</h2>
+        <p className="admin-muted">{uiText('Укажите цену в рублях за весь период. Новая цена применяется к новым заказам.')}</p>
+        {prices ? <form className="admin-fields" onSubmit={event => {
+          event.preventDefault();
+          void task(async () => {
+            const data = await api<{ prices: Prices }>('/admin/premium-prices', write('PUT', { prices }));
+            if (data) setPrices(data.prices);
+          }, uiText('Цены Premium сохранены.'));
+        }}>
+          <div className="admin-price-grid">{periods.map(period => <label key={period.months}>
+            {period.label}
+            <input name={String(period.months)} type="number" required min={1} max={maxPremiumPrice} step={1}
+              value={prices[period.months] || ''} disabled={busy} onChange={event => {
+                const value = event.currentTarget.valueAsNumber;
+                setPrices({ ...prices, [period.months]: Number.isFinite(value) ? value : 0 });
+              }} />
+          </label>)}</div>
+          <button type="submit" className="admin-primary" disabled={busy}>{uiText('Сохранить цены')}</button>
+        </form> : busy ? <p role="status">{uiText('Загружаем…')}</p> :
+          <button type="button" onClick={() => openView('premium')}>{uiText('Повторить')}</button>}
+      </section>}
       {view === 'settings' && <section className="admin-panel">
         <h2>{uiText("Способ связи с поддержкой")}</h2>
         <form className="admin-fields" onSubmit={event => {
@@ -485,6 +518,7 @@ function auditLabel(action: string) {
     case 'blocked:True': return uiText("Аккаунт заблокирован");
     case 'blocked:False': return uiText("Аккаунт разблокирован");
     case 'revoke_sessions': return uiText("Завершены сеансы");
+    case 'update_premium_prices': return uiText('Изменены цены Premium');
     case 'update_support_contact': return uiText("Изменён контакт поддержки");
     default: return action;
   }

@@ -1,8 +1,10 @@
 import { formatLocale, uiText, htmlUiText } from '../i18n';
-import { createApiClient } from '../lib/api';
+import { ApiError, createApiClient } from '../lib/api';
 import { setAppearanceAccount } from '../features/appearance/store';
 import { bindFilePicker, filePickerMarkup, readUpload, uploadError } from '../lib/filePicker';
 import { publishNutrition, resetNutritionFilters } from '../features/nutrition/store';
+import { bindPetCatalog, catalogRequiredMessage, petCatalogMarkup } from '../features/pets/picker';
+import { petCatalogLabel } from '../features/pets/catalog';
 
 // =====================================================================
 // 1. CORE HELPERS & API CLIENT (ZERO-STORAGE JWT + BACKEND SYNC)
@@ -49,7 +51,7 @@ try {
   authToken = '';
 }
 
-const apiFetch = createApiClient({
+const requestApi = createApiClient({
   getToken: () => authToken,
   onUnauthorized: () => {
     clearSession();
@@ -60,6 +62,23 @@ const apiFetch = createApiClient({
     if (authToken) syncServerData(true);
   }, 100),
 });
+
+let careWriteVersion = 0;
+let pendingCareWrites = 0;
+
+async function apiFetch(endpoint, options) {
+  const writingCare = options?.method && options.method.toUpperCase() !== 'GET' &&
+    (endpoint.includes('/reminders') || endpoint.startsWith('/actions/') && endpoint.endsWith('/undo'));
+  if (!writingCare) return requestApi(endpoint, options);
+  pendingCareWrites += 1;
+  careWriteVersion += 1;
+  try {
+    return await requestApi(endpoint, options);
+  } finally {
+    pendingCareWrites -= 1;
+    careWriteVersion += 1;
+  }
+}
 
 const uid = () => crypto.randomUUID?.() || String(Date.now() + Math.random());
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -472,20 +491,7 @@ async function loadServerData() {
       // 4. Load all reminders
       const rems = await apiFetch('/reminders').catch(() => []);
       if (Array.isArray(rems)) {
-        state.events = rems.map(r => ({
-          id: 'sr_' + r.id,
-          serverId: r.id,
-          petId: String(r.pet_id),
-          title: r.title,
-          type: r.reminder_type === 'feeding' ? 'Кормление' : r.reminder_type === 'vet_visit' ? 'Ветеринар' : r.reminder_type === 'medication' ? 'Препарат' : (['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка'].includes(r.reminder_type) ? r.reminder_type : 'Процедура'),
-          at: r.at || ((r.due_date || today()) + 'T12:00:00+03:00'),
-          food: r.food || '',
-          status: r.status || (r.is_completed ? 'completed' : 'pending'),
-          doneBy: r.done_by || null,
-          completedAt: r.completed_at || null,
-          intervalDays: r.interval_days || null,
-          intervalMonths: r.interval_months || null
-        }));
+        state.events = rems.map(normalizeReminder);
       }
       // 5. Load match data for active pet
       await loadMatchDataForActivePet(true);
@@ -607,7 +613,7 @@ function renderPetAccountSwitcher() {
     const chosen = p.id === current.id;
     return '<button type="button" class="account-row ' + (chosen ? 'is-current' : '') + '" data-account-pet="' + esc(p.id) + '" aria-pressed="' + chosen + '">' +
       '<span class="account-avatar" aria-hidden="true">' + petAvatar(p) + '</span>' +
-      '<span class="account-row-copy"><b>' + esc(p.name) + '</b><small>' + esc(p.species) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</small></span>' +
+      '<span class="account-row-copy"><b>' + esc(p.name) + '</b><small>' + esc(petCatalogLabel(p.species, 'species')) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</small></span>' +
       '<span class="account-check" aria-hidden="true">✓</span>' +
     '</button>';
   }).join('');
@@ -646,18 +652,9 @@ function routeHash(name, petId = pet()?.id) {
   return '#/pet/' + encodeURIComponent(petId) + '/' + name;
 }
 
-function mayDiscardPetEdits() {
-  const form = $('health-pet-form');
-  if (form.dataset.dirty !== 'true') return true;
-  if (!confirm(uiText("В карточке питомца есть несохранённые изменения. Выйти без сохранения?"))) return false;
-  renderHealthPetProfile(true);
-  return true;
-}
-
 function setPetContext(id) {
   if (!state.pets.some(p => p.id === String(id))) return false;
   const changed = state.selected !== String(id);
-  if (changed && !mayDiscardPetEdits()) return false;
   state.selected = String(id);
   healthFilter = 'all'; documentFilter = 'all'; careFilter = 'all';
   resetNutritionFilters();
@@ -684,7 +681,6 @@ function show(name, updateUrl = true) {
   if (name === 'match' && !FRIENDS_ENABLED) { name = 'pets'; history.replaceState(null, '', routeHash('pets')); }
   if (name === 'home') name = 'health';
   if (!Object.hasOwn(pageLabels, name) || (!pet() && !['pets', 'profile'].includes(name))) name = 'pets';
-  if (name !== page && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
   if (name === 'health') healthTab = requestedDocuments ? 'documents' : 'overview';
   const pageChanged = name !== page;
   const enteringMatch = name === 'match' && page !== 'match';
@@ -854,7 +850,7 @@ function renderPetDirectory() {
       '</span>' +
       '<span class="pet-card-body">' +
         '<strong>' + esc(p.name) + '</strong>' +
-        '<span class="pet-card-meta">' + esc(p.species) + ' · ' + esc(p.breed || 'Метис') + ' · ' + esc(petProfileAge(p.birthDate)) + '</span>' +
+        '<span class="pet-card-meta">' + esc(petCatalogLabel(p.species, 'species')) + ' · ' + esc(petCatalogLabel(p.breed || 'Метис', 'breed', p.species)) + ' · ' + esc(petProfileAge(p.birthDate)) + '</span>' +
         shareHtml +
         '<span class="pet-card-status"><span class="status-dot ' + (overdue ? 'warning' : '') + '"></span>' + esc(status) + '</span>' +
         (overdue ? '<button type="button" class="btn tiny" data-overdue-pet="' + esc(p.id) + '">' + (overdueEvents.length > 1 ? uiText("Посмотреть просроченные") : uiText("Посмотреть событие")) + '</button>' : '') +
@@ -885,7 +881,6 @@ function renderPetDirectory() {
 function renderPetHighlights() {
   const p = pet();
   if (!p) return;
-  renderHealthPetProfile();
   const entries = state.activity.filter(a => isForPet(a, p)).slice(0, 12);
   $('care-activity').innerHTML = entries.map(a => '<div class="activity-item"><span class="activity-icon"><svg aria-hidden="true"><use href="#paw"/></svg></span><div><b>' + esc(a.action) + '</b><p>' + esc(a.actor) + '</p></div><time>' + esc(when(a.at)) + '</time></div>').join('') || ("<p class=\"empty\">"+htmlUiText("Записей пока нет. Отметьте первое действие по уходу.")+"</p>");
 }
@@ -957,114 +952,30 @@ function renderWeight() {
 }
 $('weight-period').onchange = renderWeight;
 
-// HEALTH INLINE PET PROFILE FORM
+// SHARED EDITOR FIELDS
 const field = (name, label, type = 'text', opts = {}) => '<label class="field ' + (opts.full ? 'full' : '') + '">' + esc(uiText(label)) + (type === 'select' ? '<select name="' + name + '" ' + (opts.required ? 'required' : '') + '>' + opts.options.map(([v, t]) => '<option value="' + esc(v) + '">' + esc(uiText(t)) + '</option>').join('') + '</select>' : type === 'textarea' ? '<textarea name="' + name + '" placeholder="' + esc(opts.placeholder || '') + '"></textarea>' : '<input name="' + name + '" type="' + type + '" ' + (opts.required ? 'required' : '') + ' ' + (opts.min ? 'min="' + opts.min + '"' : '') + ' ' + (opts.max ? 'max="' + opts.max + '"' : '') + ' ' + (opts.step ? 'step="' + opts.step + '"' : '') + ' placeholder="' + esc(opts.placeholder || '') + '">') + '</label>';
 const f = { date: n => field(n, uiText("Дата"), 'date', { required: true }), notes: () => field('notes', uiText("Комментарий"), 'textarea', { full: true }) };
-
-function petProfileFields(p) {
-  const shareBlock = p?.shareCode
-    ? ("<div class=\"field wide-mobile\">"+"<label>"+htmlUiText("Код совместного ухода")+"</label>"+"<div class=\"join-input-group\" style=\"margin-top:8px\">"+"<input type=\"text\" aria-label=\""+htmlUiText("Код совместного ухода")+"\" value=\"") + esc(p.shareCode) + '" readonly aria-readonly="true"><button type="button" class="btn tiny" data-copy-pet-code="' + esc(p.shareCode) + ("\">"+htmlUiText("Скопировать")+"</button>"+"</div>"+"</div>")
-    : '';
-  return field('name', uiText("Имя"), 'text', { required: true }) +
-    field('species', uiText("Вид"), 'text', { required: true, placeholder: uiText("Кошка, собака…") }) +
-    field('breed', uiText("Порода"), 'text', { placeholder: uiText("Порода или метис") }) +
-    field('birthDate', uiText("Дата рождения"), 'date', { max: petProfileLocalDate() }) +
-    ("<label class=\"field wide-mobile\">"+htmlUiText("Возраст")+"<input name=\"calculatedAge\" readonly aria-readonly=\"true\">"+"<span class=\"profile-age-hint\">"+htmlUiText("Рассчитывается по дате рождения")+"</span>"+"</label>") +
-    field('sex', uiText("Пол"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
-    field('sterilized', uiText("Стерилизация"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
-    ("<label class=\"field wide-mobile\">"+htmlUiText("Номер чипа")+"<input name=\"chip\" type=\"text\" placeholder=\""+htmlUiText("15-значный номер микрочипа")+"\">"+"</label>") +
-    shareBlock +
-    '<div class="profile-notes-fields">' +
-      field('notes', 'Особенности', 'textarea', { placeholder: uiText("Привычки, характер и особенности ухода") }) +
-      field('marks', 'Важные отметки', 'textarea', { placeholder: uiText("Аллергии и другие важные сведения") }) +
-    '</div>';
-}
-
-function fillHealthPetForm(p) {
-  const form = $('health-pet-form');
-  $('health-profile-fields').innerHTML = petProfileFields(p);
-  for (const [key, value] of Object.entries(p)) {
-    const input = form.elements.namedItem(key);
-    if (input) input.value = value ?? '';
-  }
-  form.elements.namedItem('calculatedAge').value = petProfileAge(p.birthDate);
-  form.elements.namedItem('birthDate').oninput = event => {
-    form.elements.namedItem('calculatedAge').value = petProfileAge(event.target.value);
-  };
-  form.dataset.petId = p.id;
-  form.dataset.dirty = 'false';
-  $('health-profile-feedback').textContent = '';
-  $('health-profile-feedback').classList.remove('is-error');
-}
-
-function renderHealthPetProfile(force = false) {
-  const p = pet(), form = $('health-pet-form');
-  if (!p) return;
-  $('health-profile-avatar').innerHTML = petAvatar(p);
-  $('health-profile-name').textContent = p.name;
-  $('health-profile-meta').textContent = [p.species, p.breed, p.shareCode && ((uiText("Код:")+" ") + p.shareCode)].filter(Boolean).join(' · ');
-  if (force || form.dataset.petId !== p.id || form.dataset.dirty !== 'true') fillHealthPetForm(p);
-}
-
-const healthPetForm = $('health-pet-form');
-healthPetForm.addEventListener('input', () => { healthPetForm.dataset.dirty = 'true'; });
-healthPetForm.addEventListener('change', () => { healthPetForm.dataset.dirty = 'true'; });
-$('health-profile-reset').onclick = () => { if (healthPetForm.dataset.dirty !== 'true' || confirm(uiText("Отменить изменения карточки питомца?"))) renderHealthPetProfile(true); };
-
-healthPetForm.onsubmit = async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const raw = Object.fromEntries(new FormData(form));
-  const values = Object.fromEntries(['name', 'species', 'breed', 'birthDate', 'sex', 'sterilized', 'notes', 'marks', 'chip'].map(key => [key, String(raw[key] || '').trim()]));
-  const feedback = $('health-profile-feedback');
-  const fail = message => { feedback.textContent = message; feedback.classList.add('is-error'); feedback.focus(); };
-  if (!values.name || !values.species) { fail(uiText("Укажите имя и вид питомца.")); return; }
-  if (values.birthDate && values.birthDate > petProfileLocalDate()) { fail(uiText("Дата рождения не может быть в будущем.")); return; }
-  const target = state.pets.find(p => p.id === form.dataset.petId) || pet();
-  if (!target) return;
-
-  const updated = {...target, ...values};
-  if (target.serverId) {
-    try {
-      await apiFetch('/pets/' + target.serverId, {
-        method: 'PUT',
-        body: JSON.stringify({
-          name: updated.name,
-          species: updated.species,
-          breed: updated.breed || 'Метис',
-          birth_date: updated.birthDate || today(),
-          sex: updated.sex,
-          sterilized: updated.sterilized === 'Да',
-          microchip_number: updated.chip || null,
-          notes: updated.notes || null,
-          marks: updated.marks || null
-        })
-      });
-    } catch (err) {
-      fail((uiText("Ошибка сохранения на сервере:")+" ") + err.message);
-      return;
-    }
-  }
-  Object.assign(target, values);
-  logActivity(target.id, (uiText("Обновил(а) карточку питомца")+" ") + updated.name, '🐾');
-  form.dataset.dirty = 'false';
-  render();
-  feedback.classList.remove('is-error');
-  feedback.textContent = uiText("Карточка сохранена на сервере");
-};
 
 // NUTRITION SECTION
 function mealLocalDay(now = new Date()) {
   return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
 }
+function mealCrossesMidnight(meal) {
+  return Boolean(meal.endTime && meal.endTime < meal.time);
+}
+function mealOccurrenceDay(meal, now = new Date()) {
+  if (!mealCrossesMidnight(meal)) return mealLocalDay(now);
+  const day = mskDay(now);
+  return mskNow(now).slice(11, 16) <= meal.endTime ? mskShift(day, -1) : day;
+}
 function mealIsComplete(meal, now = new Date()) {
-  return meal.completedOn === mealLocalDay(now);
+  return meal.completedOn === mealOccurrenceDay(meal, now);
 }
 function dailyMealsForPet(petId) {
   return (state.mealPlans || []).filter(meal => String(meal.petId) === String(petId)).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 }
 function mealTimeLabel(meal) {
-  return meal.endTime ? meal.time + '–' + meal.endTime : meal.time;
+  return meal.endTime ? meal.time + '–' + meal.endTime + (mealCrossesMidnight(meal) ? ' (' + uiText('на следующий день') + ')' : '') : meal.time;
 }
 
 function renderNutrition() {
@@ -1081,12 +992,12 @@ function renderFeeding() {
   $('feeding-reminders').innerHTML = plans.map(meal => {
     const done = mealIsComplete(meal, now), timing = mealTimeLabel(meal);
     return '<label class="meal-reminder' + (done ? ' is-complete' : '') + '"><input type="checkbox" data-meal-check="' + esc(meal.id) + '"' + (done ? ' checked' : '') + ' aria-label="' + esc((uiText("Покормить:")+" ") + meal.food + ', ' + timing) + '"><span class="meal-reminder-copy"><span class="meal-reminder-heading"><strong>' + esc(meal.food) + '</strong><span class="meal-time">' + esc(timing) + '</span></span>' + (meal.notes ? '<span class="meal-note">' + esc(meal.notes) + '</span>' : '') + '<span class="meal-status">' + (done ? uiText("Выполнено сегодня") : uiText("Ежедневно")) + '</span></span></label>';
-  }).join('') || ("<p class=\"empty\">"+htmlUiText("Питание ещё не добавлено. Нажмите «+ Добавить питание», чтобы составить ежедневное расписание.")+"</p>");
+  }).join('') || ("<p class=\"empty\">"+htmlUiText("Питание ещё не добавлено. Нажмите «Настроить кормление», чтобы составить расписание.")+"</p>");
 
   $('feeding-reminders').querySelectorAll('[data-meal-check]').forEach(input => input.onchange = async () => {
     const meal = dailyMealsForPet(p.id).find(item => item.id === input.dataset.mealCheck);
     if (!meal) return;
-    const stamp = new Date(), day = mealLocalDay(stamp);
+    const stamp = new Date(), day = mealOccurrenceDay(meal, stamp);
     meal.completedOn = input.checked ? day : null;
 
     if (meal.serverId) {
@@ -1137,9 +1048,26 @@ function renderFeeding() {
 function renderMealHistory() {
   const p = pet();
   const entries = state.feedingLogs.filter(row => isForPet(row, p)).sort((a, b) => mskMoment(b.at) - mskMoment(a.at));
-  const localLabel = at => new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(mskMoment(at));
-  $('feeding-history').innerHTML = entries.slice(0, 20).map(row => '<div class="record"><div class="record-title"><b>' + esc(row.food) + '</b><span class="type">' + (row.mealPlanId || row.reminderId ? uiText("По расписанию") : uiText("Запись")) + '</span></div><time>' + esc(localLabel(row.at)) + ' · ' + esc(row.actor || 'Владелец') + '</time>' + (row.amount ? ("<p>"+htmlUiText("Порция:")+" ") + esc(row.amount) + '</p>' : '') + (row.notes ? '<p>' + esc(row.notes) + '</p>' : '') + '</div>').join('') || ("<p class=\"empty\">"+htmlUiText("Отметьте кормление галочкой — оно появится в истории.")+"</p>");
+  const formatter = new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const time = row => esc(formatter.format(mskMoment(row.at)));
+  const empty = htmlUiText('Отметьте кормление галочкой — оно появится в истории.');
+  $('feeding-history-preview').innerHTML = entries.slice(0, 3).map(row =>
+    '<span class="feeding-history-preview-row"><b>' + esc(row.food) + '</b><time>' + time(row) + '</time></span>'
+  ).join('') || '<span class="empty">' + empty + '</span>';
+  if (!$('feeding-history-dialog').open) return;
+  $('feeding-history').innerHTML = entries.map(row =>
+    '<div class="record"><div class="record-title"><b>' + esc(row.food) + '</b><span class="type">' +
+    htmlUiText(row.mealPlanId || row.reminderId ? 'По расписанию' : 'Запись') + '</span></div><time>' +
+    time(row) + ' · ' + esc(row.actor || 'Владелец') + '</time>' +
+    (row.amount ? '<p>' + htmlUiText('Порция:') + ' ' + esc(row.amount) + '</p>' : '') +
+    (row.notes ? '<p>' + esc(row.notes) + '</p>' : '') + '</div>'
+  ).join('') || '<p class="empty">' + empty + '</p>';
 }
+
+$('feeding-history-open').onclick = () => {
+  $('feeding-history-dialog').showModal();
+  renderMealHistory();
+};
 
 // CARE & EVENTS SECTION
 function nextReminder(e) {
@@ -1179,24 +1107,85 @@ async function eventAction(id, action) {
   notify(action === 'complete' ? uiText("Выполнено") : uiText("Пропущено"));
 }
 
+function normalizeReminder(r) {
+  return {
+    id: 'sr_' + r.id,
+    serverId: r.id,
+    petId: String(r.pet_id),
+    title: r.title,
+    type: r.reminder_type === 'feeding' ? 'Кормление' : r.reminder_type === 'vet_visit' ? 'Ветеринар' : r.reminder_type === 'medication' ? 'Препарат' : (['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка'].includes(r.reminder_type) ? r.reminder_type : 'Процедура'),
+    at: r.at || ((r.due_date || today()) + 'T12:00:00+03:00'),
+    food: r.food || '',
+    status: r.status || (r.is_completed ? 'completed' : 'pending'),
+    doneBy: r.done_by || null,
+    completedAt: r.completed_at || null,
+    intervalDays: r.interval_days || null,
+    intervalMonths: r.interval_months || null
+  };
+}
+
+const rowMarkup = new WeakMap();
+
+function updateCareRows(container, rows, emptyMarkup) {
+  const desired = rows.length ? rows : [['empty', emptyMarkup]];
+  const existing = new Map([...container.children].map(node => [node.dataset.careKey, node]));
+  let cursor = container.firstElementChild;
+  for (const [key, markup] of desired) {
+    let row = existing.get(key);
+    existing.delete(key);
+    if (!row || rowMarkup.get(row) !== markup) {
+      const template = document.createElement('template');
+      template.innerHTML = markup;
+      const next = template.content.firstElementChild;
+      next.dataset.careKey = key;
+      rowMarkup.set(next, markup);
+      if (row) {
+        if (row.querySelector('details')?.open && next.querySelector('details')) {
+          next.querySelector('details').open = true;
+        }
+        const focused = [...row.querySelectorAll('button,summary')].indexOf(document.activeElement);
+        if (cursor === row) cursor = next;
+        row.replaceWith(next);
+        if (focused >= 0) next.querySelectorAll('button,summary')[focused]?.focus({ preventScroll: true });
+      }
+      row = next;
+    }
+    if (row !== cursor) container.insertBefore(row, cursor);
+    cursor = row.nextElementSibling;
+  }
+  for (const row of existing.values()) row.remove();
+}
+
 function renderCare() {
   const p = pet();
   if (!p) return;
+  const preview = $('care-pet-preview');
+  const description = [petCatalogLabel(p.species, 'species'), petCatalogLabel(p.breed, 'breed', p.species), petProfileAge(p.birthDate)];
+  preview.innerHTML = '<div class="care-pet-art" aria-hidden="true">' + petAvatar(p) + '</div>' +
+    '<div class="care-pet-copy"><h2>' + esc(p.name) + '</h2><p>' + esc(description.filter(Boolean).join(' · ')) +
+    '</p><button class="btn" type="button" data-care-pet-open>' + htmlUiText('Открыть карточку') + '</button></div>';
+  preview.querySelector('[data-care-pet-open]').onclick = () => openModal('pet-details');
   const categories = [['today', uiText("Сегодня")], ['tomorrow', uiText("Завтра")], ['week', uiText("На неделе")], ['overdue', uiText("Просрочено")], ['all', uiText("Все")]];
   $('care-filters').innerHTML = categories.map(([key, label]) => '<button class="chip ' + (careFilter === key ? 'active' : '') + '" data-care-filter="' + key + '" type="button">' + label + '</button>').join('');
   document.querySelectorAll('[data-care-filter]').forEach(b => b.onclick = () => { careFilter = b.dataset.careFilter; renderCare(); });
 
+  renderCareEvents(p);
+  renderShoppingList();
+  renderClinicContact();
+}
+
+function renderCareEvents(p) {
   const active = state.events.filter(e => isForPet(e, p) && e.status === 'pending' && (careFilter === 'all' || reminderStatus(e) === careFilter || (careFilter === 'week' && ['today', 'tomorrow', 'week'].includes(reminderStatus(e))))).sort((a, b) => mskMoment(a.at) - mskMoment(b.at));
-  $('care-events').innerHTML = active.map(e => '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(uiText(e.type || 'Процедура')) + (e.intervalDays ? (" · "+uiText("каждые")+" ") + esc(e.intervalDays) + (" "+uiText("дн.")) : '') + (e.intervalMonths ? (" · "+uiText("каждые")+" ") + esc(e.intervalMonths) + (" "+uiText("мес.")) : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + ("\" data-do=\"complete\" aria-label=\""+htmlUiText("Готово — отметить выполненным:")+" ") + esc(e.title) + ("\">"+htmlUiText("Готово")+"</button>"+"<details class=\"event-more\">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(e.title) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<div class=\"event-more-actions\">"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"skip\" aria-label=\""+htmlUiText("Пропустить:")+" ") + esc(e.title) + ("\">"+htmlUiText("Пропустить")+"</button>"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"move\" aria-label=\""+htmlUiText("Перенести:")+" ") + esc(e.title) + ("\">"+htmlUiText("Перенести")+"</button>"+"</div>"+"</details>"+"</div>"+"</div>")).join('') || ("<p class=\"empty\">"+htmlUiText("Событий за выбранный период нет.")+"</p>");
+  updateCareRows($('care-events'), active.map(e => [e.id, '<div class="event-row ' + (reminderStatus(e) === 'overdue' ? 'overdue' : '') + '"><div><b>' + esc(e.title) + '</b><div class="small">' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(uiText(e.type || 'Процедура')) + (e.intervalDays ? (" · "+uiText("каждые")+" ") + esc(e.intervalDays) + (" "+uiText("дн.")) : '') + (e.intervalMonths ? (" · "+uiText("каждые")+" ") + esc(e.intervalMonths) + (" "+uiText("мес.")) : '') + '</div></div><div class="event-actions"><button class="btn tiny" type="button" data-care-event="' + esc(e.id) + ("\" data-do=\"complete\" aria-label=\""+htmlUiText("Готово — отметить выполненным:")+" ") + esc(e.title) + ("\">"+htmlUiText("Готово")+"</button>"+"<details class=\"event-more\">"+"<summary aria-label=\""+htmlUiText("Ещё:")+" "+"") + esc(e.title) + ("\">"+htmlUiText("Ещё")+"</summary>"+"<div class=\"event-more-actions\">"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"skip\" aria-label=\""+htmlUiText("Пропустить:")+" ") + esc(e.title) + ("\">"+htmlUiText("Пропустить")+"</button>"+"<button class=\"btn tiny\" type=\"button\" data-care-event=\"") + esc(e.id) + ("\" data-do=\"move\" aria-label=\""+htmlUiText("Перенести:")+" ") + esc(e.title) + ("\">"+htmlUiText("Перенести")+"</button>"+"</div>"+"</details>"+"</div>"+"</div>")]), ("<p class=\"empty\">"+htmlUiText("Событий за выбранный период нет.")+"</p>"));
   document.querySelectorAll('[data-care-event]').forEach(b => b.onclick = () => eventAction(b.dataset.careEvent, b.dataset.do));
 
   const history = state.events.filter(e => isForPet(e, p) && e.status !== 'pending').sort((a, b) => mskMoment(b.completedAt || b.at) - mskMoment(a.completedAt || a.at)), expanded = expandedHistoryPet === p.id;
-  $('care-history').innerHTML = (expanded ? history : history.slice(0, 5)).map(e => '<div class="record"><div class="record-title"><b>' + esc(e.title) + '</b><span class="care-tag ' + (e.status === 'completed' ? 'done-tag' : 'overdue-tag') + '">' + (e.status === 'completed' ? uiText("Выполнено") : uiText("Пропущено")) + '</span></div><p>' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(e.doneBy || state.user.name || 'Владелец') + '</p><button class="btn tiny" type="button" data-undo-event="' + esc(e.id) + ("\">"+htmlUiText("Отменить отметку")+"</button>"+"</div>")).join('') || ("<p class=\"empty\">"+htmlUiText("Истории пока нет.")+"</p>");
+  updateCareRows($('care-history'), (expanded ? history : history.slice(0, 5)).map(e => [e.id, '<div class="record"><div class="record-title"><b>' + esc(e.title) + '</b><span class="care-tag ' + (e.status === 'completed' ? 'done-tag' : 'overdue-tag') + '">' + (e.status === 'completed' ? uiText("Выполнено") : uiText("Пропущено")) + '</span></div><p>' + esc(mskLabel(e.at)) + (" "+uiText("МСК ·")+" ") + esc(e.doneBy || state.user.name || 'Владелец') + '</p><button class="btn tiny" type="button" data-undo-event="' + esc(e.id) + ("\">"+htmlUiText("Отменить отметку")+"</button>"+"</div>")]), ("<p class=\"empty\">"+htmlUiText("Истории пока нет.")+"</p>"));
 
   const more = $('care-history-more');
   more.hidden = history.length <= 5;
   more.textContent = expanded ? uiText("Свернуть") : (uiText("Показать все")+" (") + history.length + ')';
-  more.onclick = () => { expandedHistoryPet = expanded ? null : p.id; renderCare(); };
+  more.onclick = () => { expandedHistoryPet = expanded ? null : p.id; renderCareEvents(p); };
 
   document.querySelectorAll('[data-undo-event]').forEach(b => b.onclick = () => {
     const e = state.events.find(x => x.id === b.dataset.undoEvent);
@@ -1215,8 +1204,45 @@ function renderCare() {
     }
   });
 
-  renderShoppingList();
-  renderClinicContact();
+}
+
+let carePollPending = false;
+
+async function refreshSharedCare() {
+  const p = pet();
+  if (page !== 'care' || !p?.serverId || !authToken || document.hidden ||
+      carePollPending || syncPending || pendingCareWrites) return;
+  const token = authToken;
+  const version = careWriteVersion;
+  const snapshot = state.events;
+  carePollPending = true;
+  try {
+    const rows = await apiFetch('/pets/' + p.serverId + '/shared-care', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!Array.isArray(rows) || token !== authToken || p.id !== pet()?.id ||
+        page !== 'care' || syncPending || state.events !== snapshot || version !== careWriteVersion) return;
+    const current = state.events.filter(event => isForPet(event, p) && event.serverId);
+    const byId = new Map(current.map(event => [event.id, event]));
+    let changed = current.length !== rows.length;
+    const updated = rows.map(row => {
+      const next = normalizeReminder(row);
+      const before = byId.get(next.id);
+      if (before && JSON.stringify(before) === JSON.stringify(next)) return before;
+      changed = true;
+      return next;
+    });
+    if (!changed) return;
+    state.events = state.events.filter(event => !isForPet(event, p) || !event.serverId).concat(updated);
+    renderCareEvents(p);
+    scheduleNextExactPush();
+  } catch (error) {
+    if (error instanceof ApiError && [403, 404].includes(error.status) &&
+        authToken === token && pet()?.id === p.id) {
+      await syncServerData(true);
+      restoreRoute();
+    }
+  } finally {
+    carePollPending = false;
+  }
 }
 
 function shoppingItemText(item) {
@@ -1481,7 +1507,7 @@ function renderMatch() {
       '<span class="match-context-avatar">' + petAvatar(p) + '</span>' +
       '<div class="match-context-info">' +
         ("<strong>"+htmlUiText("Питомец:")+" ") + esc(p.name) + '</strong>' +
-        '<small>' + esc(p.species) + (" · "+uiText("Порода:")+" ") + esc(myProf?.breed || p.breed || 'Метис') + (" · "+uiText("Возраст:")+" ") + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + (" · "+uiText("Прививки:")+" ") + esc(myProf?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано')) + '</small>' +
+        '<small>' + esc(petCatalogLabel(p.species, 'species')) + (" · "+uiText("Порода:")+" ") + esc(myProf?.breed || p.breed || 'Метис') + (" · "+uiText("Возраст:")+" ") + esc(petProfileAge(myProf?.birth_date || p.birthDate)) + (" · "+uiText("Прививки:")+" ") + esc(myProf?.vaccinated || (hasVacc ? 'Да, все по возрасту' : 'Не указано')) + '</small>' +
       '</div>' +
     '</div>' +
     '<div class="row">' +
@@ -1706,7 +1732,6 @@ function renderProfile() {
 
   if (!p) {
     $('family-list').innerHTML = ("<p class=\"empty\">"+htmlUiText("Сначала добавьте питомца или подключитесь по коду.")+"</p>");
-    $('avatar-preview').innerHTML = ("<p class=\"empty\">"+htmlUiText("Сначала добавьте питомца.")+"</p>");
   } else {
     const coOwners = Array.isArray(p.coOwners) ? p.coOwners : [];
     const localMembers = state.members.filter(m => isForPet(m, p));
@@ -1749,9 +1774,6 @@ function renderProfile() {
       render();
     });
 
-    const bg = state.avatar[p.id]?.background || 'lavender', accessory = state.avatar[p.id]?.accessory || 'none', image = p.photo ? '<img src="' + esc(p.photo) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:20px">' : petArt(p, 'neutral');
-    const birthday = p.birthDate?.slice(5) === mskDay().slice(5);
-    $('avatar-preview').innerHTML = '<div class="row"><div class="avatar" style="background:' + ({ lavender: '#dcd8fb', peach: '#f6dfdc', mint: '#d5eee6' })[bg] + ';width:88px;height:88px;position:relative">' + image + (accessory === 'bow' ? '<span style="position:absolute;top:0;right:4px">🎀</span>' : accessory === 'crown' ? '<span style="position:absolute;top:0;right:4px">👑</span>' : '') + '</div><div><b>' + esc(p.name) + '</b><p class="small">' + (birthday ? uiText("С днём рождения!") : uiText("Фон и аксессуар синхронизированы")) + '</p></div></div>';
   }
 
   const pushActive = Boolean(set.pushEnabled);
@@ -1789,8 +1811,8 @@ function renderProfile() {
 function renderDetails() {
   const p = pet();
   const facts = [
-    [uiText("Вид"), p.species],
-    [uiText("Порода"), p.breed],
+    [uiText("Вид"), petCatalogLabel(p.species, 'species')],
+    [uiText("Порода"), petCatalogLabel(p.breed, 'breed', p.species)],
     [uiText("Дата рождения"), p.birthDate ? date(p.birthDate) : ''],
     [uiText("Возраст"), petProfileAge(p.birthDate)],
     [uiText("Пол"), uiText(p.sex || 'Не указано')],
@@ -1803,17 +1825,18 @@ function renderDetails() {
     ? ("<div class=\"profile-fact-wide\">"+"<dt>"+htmlUiText("Код совместного ухода")+"</dt>"+"<dd>"+"<button type=\"button\" class=\"pet-card-code\" data-copy-pet-code=\"") + esc(p.shareCode) + '"><code>' + esc(p.shareCode) + ("</code>"+"<span class=\"copy-label\">"+htmlUiText("скопировать код")+"</span>"+"</button>"+"</dd>"+"</div>")
     : '';
   $('editor-fields').innerHTML =
-    '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(p.species) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</p></div></div>' +
+    '<div class="pet-card-heading full"><span class="avatar" aria-hidden="true">' + petAvatar(p) + '</span><div><h3>' + esc(p.name) + '</h3><p>' + esc(petCatalogLabel(p.species, 'species')) + ' · ' + esc(petProfileAge(p.birthDate)) + (p.isShared ? (" · "+uiText("Совместный уход")) : '') + '</p></div></div>' +
     '<dl class="pet-profile-facts">' +
       facts.map(([label, value]) => '<div' + (['Особенности', 'Важные отметки', 'Номер чипа'].includes(label) ? ' class="profile-fact-wide"' : '') + '><dt>' + esc(uiText(label)) + '</dt><dd>' + esc(value || uiText('Не указано')) + '</dd></div>').join('') +
       shareHtml +
     '</dl>' +
-    ("<div class=\"row\">"+"<button class=\"btn\" type=\"button\" id=\"edit-pet\">"+htmlUiText("Изменить карточку")+"</button>"+"</div>") +
+    ("<div class=\"row\">"+"<button class=\"btn\" type=\"button\" id=\"edit-pet\">"+htmlUiText("Изменить карточку")+"</button><button type=\"button\" class=\"btn\" id=\"edit-pet-avatar\">"+htmlUiText("Изменить аватар питомца")+"</button></div>") +
     ("<div class=\"pet-card-shortcuts field full\">"+"<p class=\"small\">"+htmlUiText("Перейти к записям питомца")+"</p>"+"<div class=\"row\">") +
       [['health', uiText("Здоровье")], ['nutrition', uiText("Питание")], ['care', uiText("Уход и события")], ['documents', uiText("Документы")], ['match', uiText("Поиск друзей")]].filter(([key]) => key !== 'match' || FRIENDS_ENABLED).map(([key, label]) => '<button type="button" class="btn" data-card-page="' + key + '">' + label + '</button>').join('') +
     '</div></div>';
 
   $('edit-pet').onclick = () => { $('editor').close(); openModal('pet-edit'); };
+  $('edit-pet-avatar').onclick = () => { $('editor').close(); openExtraModal('avatar'); };
   $('editor-fields').querySelectorAll('[data-card-page]').forEach(button => button.onclick = () => {
     $('editor').close();
     show(button.dataset.cardPage);
@@ -1824,7 +1847,7 @@ function decorateEditor(type) {
   if (type === 'nutrition' || type === 'pet-details') return;
   const root = $('editor-fields');
   const groups = {
-    pet: [[uiText("О питомце"),['name','species','breed','birthDate','sex','sterilized']],[uiText("Особенности и фото"),['marks','notes','chip','photo']]],
+    pet: [[uiText("О питомце"),['name','species','breed','customBreed','sex','sterilized','birthDate'],uiText('Обязательно')],[uiText('Особенности'),['marks','notes'],uiText('* Необязательно')],[uiText('Фото'),['photo'],uiText('* Необязательно')]],
     'pet-edit': [[uiText("О питомце"),['name','species','breed','birthDate','sex','sterilized']],[uiText("Особенности и фото"),['marks','notes','chip','photo']]],
     health: [[uiText("Запись"),['petId','type','title','date']],[uiText("Подробности приёма"),['product','clinic','doctor','result','notes','attachment']],[uiText("Следующая процедура"),['nextDate','repeatDays','nextTime']]],
     prescription: [[uiText("Назначение врача"),['name','dose']],[uiText("Курс и приём"),['startDate','duration','times','status']]],
@@ -1842,12 +1865,18 @@ function decorateEditor(type) {
     activity: [[uiText("Действие"),['action','actor','at']]],
     'vet-contact': [[uiText("Контакты клиники"),['clinicUrl','doctor']]]
   }[type] || [];
-  for (const [index, [title, names]] of groups.entries()) {
+  for (const [index, [title, names, annotation]] of groups.entries()) {
     const fields = names.map(name => root.querySelector('[name="' + name + '"]')?.closest('.field')).filter(Boolean);
     if (!fields.length) continue;
     const section = document.createElement('section'); section.className = 'editor-section full';
     const heading = document.createElement('h3'); heading.textContent = title;
     heading.id = 'editor-section-' + index; section.setAttribute('aria-labelledby', heading.id);
+    if (annotation) {
+      const note = document.createElement('span');
+      note.className = 'editor-section-note';
+      note.textContent = annotation;
+      heading.append(' ', note);
+    }
     const grid = document.createElement('div'); grid.className = 'form-grid';
     // Insert at the first original field to preserve DOM and keyboard order.
     fields[0].before(section); section.append(heading, grid); fields.forEach(field => grid.append(field));
@@ -1889,15 +1918,20 @@ function openModal(type, id) {
           '</div>' +
         '</div>'
       : '';
-    html = field('name', uiText("Имя"), 'text', { required: true, placeholder: uiText("Например: Барсик") }) +
-      field('species', uiText("Вид"), 'text', { required: true, placeholder: uiText("Кошка, собака…") }) +
-      field('breed', uiText("Порода"), 'text', { placeholder: uiText("Порода или метис") }) +
-      field('birthDate', uiText("Дата рождения"), 'date') +
-      field('sex', uiText("Пол"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
-      field('sterilized', uiText("Стерилизация"), 'select', { options: [['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
+    const newPet = type === 'pet';
+    const choose = newPet ? [['', 'Выберите вариант']] : [];
+    html = field('name', uiText("Имя"), 'text', { required: true, placeholder: uiText("Например: Барсик"), full: type === 'pet' }) +
+      (type === 'pet' ? petCatalogMarkup() :
+        field('species', uiText("Вид"), 'text', { required: true, placeholder: uiText("Кошка, собака…") }) +
+        field('breed', uiText("Порода"), 'text', { placeholder: uiText("Порода или метис") })) +
+      field('sex', uiText("Пол"), 'select', { required: newPet, options: [...choose, ['Неизвестно', 'Неизвестно'], ['Самец', 'Самец'], ['Самка', 'Самка']] }) +
+      field('sterilized', uiText("Стерилизация"), 'select', { required: newPet, options: [...choose, ['Неизвестно', 'Неизвестно'], ['Да', 'Да'], ['Нет', 'Нет']] }) +
+      (newPet ? '<label class="field">' + htmlUiText('Дата рождения') +
+        '<input name="birthDate" type="date" required data-no-date-shortcuts max="' + petProfileLocalDate() + '"></label>' :
+        field('birthDate', uiText("Дата рождения"), 'date')) +
       field('marks', 'Важные отметки', 'textarea', { full: true, placeholder: uiText("Аллергии, хронические состояния") }) +
       field('notes', 'Особенности', 'textarea', { full: true }) +
-      field('chip', 'Номер чипа') +
+      (newPet ? '' : field('chip', 'Номер чипа')) +
       filePickerMarkup('pet-photo-upload', 'photo', 'photo', uiText("Фото питомца")) +
       joinBottomBlock;
   } else if (type === 'move') {
@@ -1963,6 +1997,7 @@ function openModal(type, id) {
 
   // Hook Join by Code button inside Pet Modal
   if (type === 'pet') {
+    bindPetCatalog(form);
     const btnJoin = $('btn-do-join');
     if (btnJoin) {
       btnJoin.onclick = async () => {
@@ -2014,7 +2049,7 @@ function openExtraModal(type) {
       field('time', uiText("Время кормления"), 'time', { required: true, full: true }) +
       field('endTime', uiText("До какого времени"), 'time') +
       field('notes', uiText("Заметка"), 'textarea', { full: true, placeholder: uiText("Порция, способ приготовления или другие детали") }) +
-      ("<p class=\"hint meal-form-hint\">"+"<span class=\"meal-range-hint\" hidden>"+htmlUiText("Интервал задаётся в пределах одного дня.")+" "+"</span>"+htmlUiText("Повторяется ежедневно и синхронизируется с сервером.")+"</p>");
+      ("<p class=\"hint meal-form-hint\">"+"<span class=\"meal-range-hint\" hidden>"+htmlUiText("Если время окончания раньше начала, интервал закончится на следующий день.")+" "+"</span>"+htmlUiText("Повторяется ежедневно и синхронизируется с сервером.")+"</p>");
     $('editor-title').textContent = title;
     $('editor-context').textContent = (uiText("Кабинет:")+" ") + p.name;
     $('editor-fields').innerHTML = html; decorateEditor(type); wireEditorFilePickers();
@@ -2156,6 +2191,10 @@ $('editor-form').onsubmit = async event => {
     }
   }
   const data = Object.fromEntries(new FormData(form));
+  if (modalType === 'pet' && (!data.species || !data.breed)) {
+    notify(catalogRequiredMessage());
+    return;
+  }
   const p = state.pets.find(x => x.id === (data.petId || $('editor').dataset.petId)) || pet();
   const submitButton = form.querySelector('[type=submit]');
   submitButton.disabled = true;
@@ -2210,7 +2249,7 @@ $('editor-form').onsubmit = async event => {
         notify((uiText("Питомец")+" ") + data.name + (" "+uiText("создан")));
         return;
       } else if (p) {
-        Object.assign(p, {
+        const updated = {
           name: data.name,
           species: data.species,
           breed: data.breed,
@@ -2221,25 +2260,25 @@ $('editor-form').onsubmit = async event => {
           notes: data.notes,
           chip: data.chip,
           ...(photoData ? { photo: photoData } : {})
-        });
+        };
         if (p.serverId) {
           await apiFetch('/pets/' + p.serverId, {
             method: 'PUT',
             body: JSON.stringify({
-              name: p.name,
-              species: p.species,
-              breed: p.breed,
-              birth_date: p.birthDate || today(),
-              sex: p.sex,
-              sterilized: p.sterilized === 'Да',
-              microchip_number: p.chip || null,
-              notes: p.notes || null,
-              marks: p.marks || null,
+              name: updated.name,
+              species: updated.species,
+              breed: updated.breed,
+              birth_date: updated.birthDate || today(),
+              sex: updated.sex,
+              sterilized: updated.sterilized === 'Да',
+              microchip_number: updated.chip || null,
+              notes: updated.notes || null,
+              marks: updated.marks || null,
               ...(photoData ? { photo_file_id: photoData } : {})
             })
           });
         }
-        renderHealthPetProfile(true);
+        Object.assign(p, updated);
       }
     } else if (modalType === 'move') {
       const row = state.events.find(x => x.id === $('editor').dataset.id);
@@ -2350,8 +2389,8 @@ $('editor-form').onsubmit = async event => {
       logActivity(p.id, (uiText("Добавил(а) оценку корма:")+" ") + data.food, '🍽️');
     } else if (modalType === 'extra-meal-plan') {
       const endTime = data.schedule === 'range' ? data.endTime : '';
-      if (data.schedule === 'range' && (!endTime || endTime <= data.time)) {
-        notify(uiText("Конец интервала должен быть позже начала в пределах одного дня."));
+      if (data.schedule === 'range' && (!endTime || endTime === data.time)) {
+        notify(uiText("Укажите разное время начала и окончания интервала."));
         return;
       }
       let serverId = null;
@@ -2364,13 +2403,9 @@ $('editor-form').onsubmit = async event => {
       }
       const newMeal = { id: serverId ? 'smp_' + serverId : uid(), serverId, petId: p.id, food: data.food, time: data.time, endTime, notes: data.notes, completedOn: null };
       state.mealPlans.push(newMeal);
-      const nowClock = mskNow().slice(11, 16);
-      const curDay = mskDay();
-      if (newMeal.time && newMeal.time < nowClock) {
-        notifiedPushKeys.add('meal_due_' + (newMeal.serverId || newMeal.id) + '_' + curDay + '_' + newMeal.time);
-      }
-      if (newMeal.endTime && newMeal.endTime < nowClock) {
-        notifiedPushKeys.add('meal_end_' + (newMeal.serverId || newMeal.id) + '_' + curDay + '_' + newMeal.endTime);
+      const now = new Date();
+      for (const occurrence of mealNotifications(newMeal, mskDay(now))) {
+        if (occurrence.at <= now || occurrence.day !== mskDay(now)) notifiedPushKeys.add(occurrence.key);
       }
     } else if (modalType === 'extra-reminder') {
       const atStr = data.at + '+03:00';
@@ -2627,23 +2662,26 @@ $('api-logout').onclick = async () => {
 
 // Automatic background sync on window focus / visibility change / interval
 function canAutoSync() {
-  if (syncPending > 0) return false;
+  if (page === 'care' || syncPending > 0) return false;
   if (page === 'match' && $('match-profile-form')?.dataset.dirty === 'true') return false;
   if (!authToken || document.hidden) return false;
   if ($('editor')?.open || $('auth-dialog')?.open || $('security-dialog')?.open || $('temporal-picker')?.open) return false;
-  if ($('health-pet-form')?.dataset.dirty === 'true') return false;
   return true;
 }
 
 window.addEventListener('focus', () => {
-  if (canAutoSync()) syncServerData(true);
+  if (page === 'care') void refreshSharedCare();
+  else if (canAutoSync()) syncServerData(true);
 });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && canAutoSync()) syncServerData(true);
+  if (document.hidden) return;
+  if (page === 'care') void refreshSharedCare();
+  else if (canAutoSync()) syncServerData(true);
 });
 setInterval(() => {
   if (canAutoSync()) syncServerData(true);
 }, 20000);
+setInterval(() => void refreshSharedCare(), 15000);
 
 // Document recognition is paused; the Health screen shows a locked “Скоро” card.
 
@@ -2715,15 +2753,12 @@ setInterval(() => {
     if (reposition) wheel.scrollTop = value * wheelRowHeight;
   }
   function syncWheels() {
-    for (const part of ['hour','minute']) {
-      const input = get(part);
-      if (input.value !== '' && input.checkValidity()) markWheel(part, Number(input.value), true);
-    }
+    for (const part of ['hour','minute']) markWheel(part, draft[part], true);
   }
   function chooseWheel(part, value, reposition = true) {
     const max = part === 'hour' ? 23 : 59;
     value = Math.max(0, Math.min(max, value));
-    draft[part] = value; get(part).value = pad(value);
+    draft[part] = value;
     markWheel(part, value, reposition); updatePreview(); error('');
   }
   for (const part of ['hour','minute']) {
@@ -2734,7 +2769,7 @@ setInterval(() => {
     }, {passive:true});
     wheel.onclick = e => { const option = e.target.closest('[data-value]'); if (option) { wheel.focus({preventScroll:true}); chooseWheel(part, Number(option.dataset.value)); } };
     wheel.onkeydown = e => {
-      const value = Number(get(part).value), last = count - 1;
+      const value = draft[part], last = count - 1;
       const next = {ArrowUp:value-1, ArrowDown:value+1, PageUp:value-5, PageDown:value+5, Home:0, End:last}[e.key];
       if (next === undefined) return; e.preventDefault(); chooseWheel(part,next);
     };
@@ -2759,7 +2794,7 @@ setInterval(() => {
   }
   function open(input) {
     if (picker.open || input.disabled || input.readOnly) return;
-    source = input; get('manual-time').open = false;
+    source = input;
     const label = [...(input.labels || [])].map(node => node.firstChild?.textContent.trim()).filter(Boolean).join(' ') || uiText("Дата и время");
     moscow = /МСК|Москв|MSK|Moscow/i.test(label);
     const initial = input.value;
@@ -2768,10 +2803,10 @@ setInterval(() => {
     const [hour, minute] = (clock || '09:00').split(':').map(Number);
     draft = { day, hour, minute };
     const d = readDay(day); viewYear = d.getFullYear(); viewMonth = d.getMonth();
-    get('hour').value = pad(hour); get('minute').value = pad(minute);
     get('context').textContent = label;
     get('title').textContent = input.type === 'time' ? uiText("Выбрать время") : input.type === 'date' ? uiText("Выбрать дату") : uiText("Дата и время");
     get('clear').hidden = input.required;
+    get('date-shortcuts').hidden = input.hasAttribute('data-no-date-shortcuts');
     picker.querySelectorAll('[data-relative-day]').forEach(button => button.disabled = !isDateAllowed(relativeDay(Number(button.dataset.relativeDay))));
     renderCalendar(); showStage(input.type === 'time' ? 'time' : 'date');
     picker.showModal(); showStage(stage, true);
@@ -2791,16 +2826,13 @@ setInterval(() => {
     if (stage === 'date' && (!get('year').checkValidity() || !get('year').value)) { error(uiText("Год должен быть от 1 до 9999.")); return; }
     if (stage === 'date' && get('direct').value !== draft.day.split('-').reverse().join('.') && !get('direct').onchange()) return;
     if (stage === 'date' && source.type === 'datetime-local') { showStage('time', true); return; }
-    if (source.type !== 'date' && (!get('hour').checkValidity() || !get('minute').checkValidity() || get('hour').value === '' || get('minute').value === '')) { error(uiText("Укажите часы от 0 до 23 и минуты от 0 до 59.")); return; }
-    draft.hour = Number(get('hour').value) || 0;
-    draft.minute = Number(get('minute').value) || 0;
     const clock = pad(draft.hour) + ':' + pad(draft.minute);
     commit(source.type === 'date' ? draft.day : source.type === 'time' ? clock : draft.day + 'T' + clock);
   };
   picker.querySelectorAll('[data-preset-time]').forEach(button => button.onclick = () => {
     const [hour, minute] = button.dataset.presetTime.split(':').map(Number);
     draft.hour = hour; draft.minute = minute;
-    get('hour').value = pad(hour); get('minute').value = pad(minute); updatePreview(); syncWheels();
+    updatePreview(); syncWheels();
   });
   get('calendar').onclick = event => {
     const button = event.target.closest('[data-day]');
@@ -2826,11 +2858,6 @@ setInterval(() => {
   };
   get('direct').oninput = () => { if (get('direct').value.trim().length === 10) get('direct').onchange(); };
   get('direct').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); get('direct').onchange(); } };
-  for (const part of ['hour','minute']) get(part).oninput = () => {
-    if (get('hour').checkValidity() && get('minute').checkValidity()) {
-      draft.hour = Number(get('hour').value); draft.minute = Number(get('minute').value); updatePreview(); syncWheels(); error('');
-    }
-  };
   get('calendar').onkeydown = e => {
     const cell = e.target.closest('[data-day]'); if (!cell) return;
     const delta = {ArrowLeft:-1, ArrowRight:1, ArrowUp:-7, ArrowDown:7}[e.key];
@@ -2889,16 +2916,46 @@ document.querySelectorAll('[data-modal]').forEach(b => b.onclick = () => openMod
 document.querySelectorAll('[data-extra-modal]').forEach(b => b.onclick = () => openExtraModal(b.dataset.extraModal));
 $('profile-paw').onclick = () => show('profile');
 let editorDirty = false;
-$('editor-form').addEventListener('input', () => { editorDirty = true; });
-$('editor-form').addEventListener('change', () => { editorDirty = true; });
-const mayCloseEditor = () => !editorDirty || confirm(uiText("Закрыть форму без сохранения изменений?"));
-$('editor').addEventListener('cancel', e => { if (!mayCloseEditor()) e.preventDefault(); });
-$('editor').addEventListener('close', () => { editorDirty = false; });
-$('cancel-editor').onclick = $('close-editor').onclick = () => { if (mayCloseEditor()) $('editor').close(); };
-window.addEventListener('beforeunload', e => { if ((editorDirty && $('editor').open) || $('health-pet-form').dataset.dirty === 'true') { e.preventDefault(); e.returnValue = ''; } });
+const editor = $('editor');
+const discardPet = $('pet-discard-dialog');
+for (const eventName of ['input', 'change']) {
+  $('editor-form').addEventListener(eventName, event => {
+    if (!event.target.matches('[data-catalog-search]')) editorDirty = true;
+  });
+}
+function requestEditorClose() {
+  if (!editorDirty) {
+    editor.close();
+  } else if (modalType === 'pet') {
+    if (discardPet.open) return;
+    $('pet-discard-art').innerHTML = petArt({ species: 'Кошка' }, 'sad');
+    discardPet.showModal();
+    $('pet-discard-continue').focus();
+  } else if (confirm(uiText("Закрыть форму без сохранения изменений?"))) {
+    editor.close();
+  }
+}
+editor.addEventListener('cancel', event => { event.preventDefault(); requestEditorClose(); });
+editor.addEventListener('close', () => { editorDirty = false; });
+$('cancel-editor').onclick = $('close-editor').onclick = requestEditorClose;
+$('pet-discard-continue').onclick = () => discardPet.close();
+$('pet-discard-confirm').onclick = () => {
+  discardPet.close();
+  editor.close();
+};
+window.addEventListener('beforeunload', e => { if (editorDirty && $('editor').open) { e.preventDefault(); e.returnValue = ''; } });
 
 document.querySelectorAll('dialog').forEach(d => {
-  d.addEventListener('click', e => { if (e.target === d && (d.id !== 'editor' || mayCloseEditor())) d.close(); });
+  d.addEventListener('click', event => {
+    if (event.target !== d) return;
+    if (d === editor || d === discardPet) {
+      const rect = d.getBoundingClientRect();
+      if (event.clientX >= rect.left && event.clientX <= rect.right &&
+          event.clientY >= rect.top && event.clientY <= rect.bottom) return;
+    }
+    if (d === editor) requestEditorClose();
+    else d.close();
+  });
 });
 
 // =====================================================================
@@ -2986,10 +3043,10 @@ async function snoozeReminderFromPush(eventId, minutes = 10) {
   showCopiedToast((uiText("Отложено на")+" ") + minutes + (" "+uiText("мин")+" (") + parts.hour + ':' + parts.minute + (" "+uiText("МСК)")));
 }
 
-async function completeMealFromPush(mealId) {
+async function completeMealFromPush(mealId, occurrenceDay) {
   const meal = state.mealPlans.find(m => m.id === mealId);
   if (!meal) return;
-  const stamp = new Date(), day = mskDay(stamp);
+  const stamp = new Date(), day = occurrenceDay ?? mealOccurrenceDay(meal, stamp);
   meal.completedOn = day;
   if (meal.serverId) {
     apiFetch('/meal-plans/' + meal.serverId + '/toggle?completed_on=' + encodeURIComponent(day), {
@@ -3137,7 +3194,7 @@ function showPushBanner(title, body, opts = {}) {
   if (mealDoneBtn) {
     mealDoneBtn.onclick = async () => {
       mealDoneBtn.disabled = true;
-      await completeMealFromPush(opts.mealId);
+      await completeMealFromPush(opts.mealId, opts.occurrenceDay);
       removeCard();
     };
   }
@@ -3317,6 +3374,18 @@ async function triggerTestPushNotification() {
   );
 }
 
+// The date of an end alert can differ from the date the meal belongs to.
+function mealNotifications(meal, day) {
+  const id = meal.serverId || meal.id;
+  const items = [['due', meal.time, day]];
+  if (meal.endTime) items.push(['end', meal.endTime, mealCrossesMidnight(meal) ? mskShift(day, -1) : day]);
+  return items.filter(([, time]) => time).map(([kind, time, occurrenceDay]) => ({
+    at: mskMoment(day + 'T' + time + ':00+03:00'),
+    key: 'meal_' + kind + '_' + id + '_' + day + '_' + time,
+    day: occurrenceDay, kind, time
+  }));
+}
+
 // Seed already-past events on initial load so historical demo items don't fire or block new ones
 function seedInitialPastNotifications() {
   if (initialPushSeedDone) return;
@@ -3334,11 +3403,8 @@ function seedInitialPastNotifications() {
     }
   }
   for (const meal of state.mealPlans) {
-    if (meal.time && meal.time < currentClock) {
-      notifiedPushKeys.add('meal_due_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.time);
-    }
-    if (meal.endTime && meal.endTime < currentClock) {
-      notifiedPushKeys.add('meal_end_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.endTime);
+    for (const event of mealNotifications(meal, currentMskDay)) {
+      if (event.time < currentClock) notifiedPushKeys.add(event.key);
     }
   }
 }
@@ -3379,58 +3445,23 @@ function checkDuePushNotifications() {
     }
   }
 
-  // 2. Fire daily meal plans at exact time (or at both start & end of interval if still not fed)
   if (!allowedTypes.length || allowedTypes.includes('Кормление')) {
     for (const meal of state.mealPlans) {
-      if (meal.completedOn === currentMskDay) continue;
-      if (!meal.time) continue;
       const targetPet = state.pets.find(x => String(x.id) === String(meal.petId));
-
-      // 2a. Start of meal time / start of interval
-      if (currentClock >= meal.time) {
-        const key = 'meal_due_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.time;
-        if (!notifiedPushKeys.has(key)) {
-          notifiedPushKeys.add(key);
-          const isRange = Boolean(meal.endTime);
-          dispatchPushNotification(
-            meal.food,
-            (targetPet ? targetPet.name + ' · ' : '') +
-              (isRange
-                ? (uiText("Начался интервал кормления")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК)"))
-                : (uiText("Пора покормить питомца")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК)"))) +
-              (meal.notes ? ' · ' + meal.notes : ''),
-            {
-              badge: isRange ? uiText("🍽️ Начало интервала") : uiText("🍽️ Время кормления"),
-              timeLabel: mealTimeLabel(meal) + (" "+uiText("МСК")),
-              page: 'nutrition',
-              petId: targetPet?.id,
-              mealId: meal.id,
-              tag: key
-            }
-          );
-        }
-      }
-
-      // 2b. End of interval reminder (only if meal has endTime and is still not marked completed)
-      if (meal.endTime && currentClock >= meal.endTime) {
-        const endKey = 'meal_end_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.endTime;
-        if (!notifiedPushKeys.has(endKey)) {
-          notifiedPushKeys.add(endKey);
-          dispatchPushNotification(
-            meal.food,
-            (targetPet ? targetPet.name + ' · ' : '') +
-              (uiText("Завершается интервал кормления")+" (") + mealTimeLabel(meal) + (" "+uiText("МСК) — не забудьте покормить питомца")) +
-              (meal.notes ? ' · ' + meal.notes : ''),
-            {
-              badge: uiText("⏰ Конец интервала кормления"),
-              timeLabel: meal.endTime + (" "+uiText("МСК")),
-              page: 'nutrition',
-              petId: targetPet?.id,
-              mealId: meal.id,
-              tag: endKey
-            }
-          );
-        }
+      for (const event of mealNotifications(meal, currentMskDay)) {
+        if (meal.completedOn === event.day || currentClock < event.time || notifiedPushKeys.has(event.key)) continue;
+        notifiedPushKeys.add(event.key);
+        const end = event.kind === 'end';
+        const title = end ? uiText('Завершается интервал кормления') :
+          meal.endTime ? uiText('Начался интервал кормления') : uiText('Пора покормить питомца');
+        const badge = end ? uiText('⏰ Конец интервала кормления') :
+          meal.endTime ? uiText('🍽️ Начало интервала') : uiText('🍽️ Время кормления');
+        dispatchPushNotification(meal.food,
+          (targetPet ? targetPet.name + ' · ' : '') + title + ' (' + mealTimeLabel(meal) + ' ' + uiText('МСК') + ')' +
+          (meal.notes ? ' · ' + meal.notes : ''),
+          { badge, timeLabel: (end ? event.time : mealTimeLabel(meal)) + ' ' + uiText('МСК'),
+            page: 'nutrition', petId: targetPet?.id, mealId: meal.id, occurrenceDay: event.day, tag: event.key }
+        );
       }
     }
   }
@@ -3458,35 +3489,13 @@ function scheduleNextExactPush() {
     }
   }
 
-  // Check upcoming daily meals today (both start time and end of interval)
   const currentMskDay = mskDay();
   for (const meal of state.mealPlans) {
-    if (meal.completedOn === currentMskDay || !meal.time) continue;
-    const startKey = 'meal_due_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.time;
-    if (!notifiedPushKeys.has(startKey)) {
-      const mealTargetMs = mskMoment(currentMskDay + 'T' + meal.time + ':00+03:00').getTime();
-      const delay = mealTargetMs - nowMs;
-      if (delay <= 0 && delay >= -60000) {
-        nearestDelayMs = 50;
-        break;
-      }
-      if (delay > 0 && delay < nearestDelayMs) {
-        nearestDelayMs = delay;
-      }
-    }
-    if (meal.endTime) {
-      const endKey = 'meal_end_' + (meal.serverId || meal.id) + '_' + currentMskDay + '_' + meal.endTime;
-      if (!notifiedPushKeys.has(endKey)) {
-        const endTargetMs = mskMoment(currentMskDay + 'T' + meal.endTime + ':00+03:00').getTime();
-        const delay = endTargetMs - nowMs;
-        if (delay <= 0 && delay >= -60000) {
-          nearestDelayMs = 50;
-          break;
-        }
-        if (delay > 0 && delay < nearestDelayMs) {
-          nearestDelayMs = delay;
-        }
-      }
+    for (const event of mealNotifications(meal, currentMskDay)) {
+      if (meal.completedOn === event.day || notifiedPushKeys.has(event.key)) continue;
+      const delay = event.at.getTime() - nowMs;
+      if (delay <= 0 && delay >= -60000) nearestDelayMs = Math.min(nearestDelayMs, 50);
+      else if (delay > 0) nearestDelayMs = Math.min(nearestDelayMs, delay);
     }
   }
 
@@ -3522,7 +3531,6 @@ function restoreRoute() {
   try { parts = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent); }
   catch { show('pets'); return; }
   if (parts[0] === 'pet' && state.pets.some(p => p.id === parts[1])) {
-    if (state.selected !== parts[1] && !mayDiscardPetEdits()) { history.replaceState(null, '', routeHash(page)); return; }
     state.selected = parts[1];
     show(parts[2] === 'health' && parts[3] === 'documents' ? 'documents' : parts[2] || 'health', false);
   } else {

@@ -179,13 +179,24 @@ b,strong {
   display:flex;
   align-items:center;
   gap:10px;
-  text-decoration:none;
+  border:0;
+  padding:0;
+  border-radius:12px;
+  background:transparent;
+  font-family:inherit;
+  cursor:pointer;
+  text-align:start;
   font-size:28px;
   font-weight:800;
   letter-spacing:-1.2px;
   margin-bottom:40px;
   color:var(--ink);
 }
+
+.brand:hover .brand-support-label { text-decoration:underline; }
+.brand:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+.brand-support { display:grid; gap:3px; line-height:1; }
+.brand-support-label { color:var(--muted); font-size:12px; font-weight:650; letter-spacing:normal; }
 
 .brand-mark {
   width:38px;
@@ -195,12 +206,25 @@ b,strong {
   color:white;
   display:grid;
   place-items:center;
+  flex:none;
 }
 
 
-.brand-dot {
-  color:var(--accent);
-  margin-left:-10px;
+.brand-name { white-space:nowrap; }
+.brand-beta {
+  display:inline-grid;
+  place-items:center;
+  min-width:1.4em;
+  height:1.4em;
+  margin-inline-start:.3em;
+  border:1px solid currentColor;
+  border-radius:.55em .55em .55em .2em;
+  color:inherit;
+  font-size:.76em;
+  font-weight:750;
+  letter-spacing:0;
+  line-height:1;
+  vertical-align:.18em;
 }
 
 .all-pets {
@@ -1704,166 +1728,6 @@ input,select,textarea {
   overflow-wrap:anywhere;
 }
 
-/* ==========================================================================
-   7. Раскрывающаяся карточка паспорта питомца (Expanded Profile Panel)
-   ========================================================================== */
-.pet-profile-panel {
-  margin-bottom:24px;
-  background:var(--surface);
-  border:1px solid var(--line);
-  border-radius:24px;
-  overflow:hidden;
-}
-
-.pet-profile-panel>summary {
-  display:flex;
-  align-items:center;
-  gap:20px;
-  list-style:none;
-  cursor:pointer;
-  padding:24px;
-  background:linear-gradient(115deg,var(--soft),var(--surface));
-  min-height:124px;
-}
-
-.pet-profile-panel>summary::-webkit-details-marker {
-  display:none;
-}
-
-.pet-profile-panel>summary:focus-visible {
-  outline:3px solid var(--accent);
-  outline-offset:-4px;
-}
-
-.profile-pet-avatar {
-  display:block;
-  width:84px;
-  height:84px;
-  flex-shrink:0;
-  overflow:hidden;
-  border-radius:22px;
-  background:var(--soft);
-}
-
-.profile-pet-avatar svg,.profile-pet-avatar img {
-  width:100%;
-  height:100%;
-  object-fit:cover;
-  display:block;
-}
-
-.profile-pet-heading {
-  display:flex;
-  flex-direction:column;
-  gap:5px;
-  min-width:0;
-  flex:1;
-}
-
-.profile-pet-heading strong {
-  font-size:27px;
-  line-height:1.2;
-  letter-spacing:-.6px;
-  overflow-wrap:anywhere;
-}
-
-.profile-pet-heading small {
-  font-size:13px;
-  color:var(--muted);
-  overflow-wrap:anywhere;
-}
-
-.profile-pet-heading .eyebrow {
-  font-size:10px;
-  margin:0;
-}
-
-.profile-disclosure-arrow {
-  width:11px;
-  height:11px;
-  border-right:2px solid var(--accent);
-  border-bottom:2px solid var(--accent);
-  transform:rotate(45deg);
-  margin:0 6px 7px 0;
-  flex-shrink:0;
-  transition:transform .18s;
-}
-
-.pet-profile-panel[open] .profile-disclosure-arrow {
-  transform:rotate(225deg);
-  margin-top:10px;
-}
-
-#health-pet-form {
-  padding:24px;
-}
-
-.pet-profile-fields {
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:20px;
-}
-
-.pet-profile-fields .field {
-  font-size:12px;
-  font-weight:600;
-  color:var(--muted);
-  min-width:0;
-}
-
-.pet-profile-fields input,.pet-profile-fields select,.pet-profile-fields textarea {
-  width:100%;
-  margin-top:7px;
-}
-
-.pet-profile-fields input[readonly] {
-  background:var(--soft);
-  color:var(--muted);
-  cursor:default;
-}
-
-.profile-age-hint {
-  display:block;
-  margin-top:5px;
-  font-size:10px;
-  font-weight:400;
-}
-
-.profile-chip-field {
-  grid-column:span 2;
-  min-width:0;
-}
-
-.profile-notes-fields {
-  grid-column:1/-1;
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:20px;
-}
-
-.profile-notes-fields textarea {
-  min-height:100px;
-}
-
-.profile-form-actions {
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-wrap:wrap;
-  margin-top:24px;
-  border-top:1px solid var(--line);
-  padding-top:20px;
-}
-
-#health-profile-feedback {
-  margin:0;
-  font-size:13px;
-  color:var(--accent-dark);
-}
-
-#health-profile-feedback.is-error {
-  color:var(--danger);
-}
-
 .pet-profile-facts {
   grid-column:1/-1;
   display:grid;
@@ -2229,7 +2093,7 @@ body {
   transition:background-color .2s,color .2s,border-color .2s;
 }
 
-.panel,.panel.glass,.pet-profile-panel,.food-tools {
+.panel,.panel.glass,.food-tools {
   background:var(--surface);
   box-shadow:var(--shadow-soft);
 }
@@ -2274,28 +2138,7 @@ body {
   box-shadow:none;
 }
 
-.pet-profile-panel>summary {
-  padding:24px 28px;
-  gap:20px;
-  min-height:124px;
-  background:var(--soft);
-}
-
-.profile-pet-avatar,.account-avatar {
-  background:var(--soft);
-}
-
-.profile-pet-avatar {
-  border:3px solid #ffffffb3;
-  border-radius:24px;
-  box-shadow:0 3px 12px #223b3508;
-}
-
-.profile-pet-heading strong {
-  font-size:30px;
-  font-weight:750;
-  letter-spacing:-1px;
-}
+.account-avatar { background:var(--soft); }
 
 input,select,textarea {
   font-size:15px;
@@ -2827,6 +2670,8 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   font-weight:750;
 }
 
+#picker-date-shortcuts[hidden] { display: none; }
+
 .picker-shortcuts {
   display:flex;
   flex-wrap:wrap;
@@ -3202,10 +3047,6 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
     border-radius:9px;
   }
 
-
-  .sidebar .brand-dot {
-    margin-left:-6px;
-  }
 
   .sidebar-bottom {
     display:contents;
@@ -3618,21 +3459,25 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
   height:190px;
 }
 
+.match-tinder-visual.has-photo {
+  height:clamp(300px, 65svh, 620px);
+  background:var(--soft);
+}
+
+.match-tinder-visual.has-photo::before { content:none; }
+
 .match-tinder-art img {
   width:100%;
   height:100%;
-  object-fit:cover;
-  border-radius:22px 22px 0 0;
-  box-shadow:0 8px 24px #203c321c;
+  min-width:0;
+  min-height:0;
+  object-fit:contain;
 }
 
 .match-tinder-visual.has-photo .match-tinder-art {
   width:100%;
   height:100%;
-}
-
-.match-tinder-visual.has-photo .match-tinder-art img {
-  border-radius:0;
+  grid-template:minmax(0,1fr) / minmax(0,1fr);
 }
 
 .match-score-pill {
@@ -4371,58 +4216,6 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
     font-size:23px;
   }
 
-  .pet-profile-panel>summary {
-    padding:16px;
-    gap:14px;
-    min-height:86px;
-  }
-
-  .profile-pet-avatar {
-    width:60px;
-    height:60px;
-    border-radius:18px;
-  }
-
-  .profile-pet-heading strong {
-    font-size:22px;
-  }
-
-  .profile-pet-heading small {
-    font-size:12px;
-  }
-
-  #health-pet-form {
-    padding:16px;
-  }
-
-  .pet-profile-fields {
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:12px;
-  }
-
-  .pet-profile-fields .field.wide-mobile,.profile-notes-fields {
-    grid-column:1/-1;
-  }
-
-  .profile-notes-fields {
-    grid-template-columns:minmax(0,1fr);
-    gap:12px;
-  }
-
-  .profile-form-actions {
-    gap:8px;
-    margin-top:16px;
-    padding-top:14px;
-  }
-
-  .profile-form-actions .btn {
-    flex:1 1 auto;
-    min-height:42px;
-    padding:9px 12px;
-    font-size:12.5px;
-    white-space:nowrap;
-  }
-
   .food-tools>summary {
     padding:16px;
     min-height:54px;
@@ -4535,7 +4328,7 @@ input[data-temporal]::-webkit-calendar-picker-indicator {
     font-size:10.5px;
   }
 
-  .form-grid:not(.pet-profile-fields) {
+  .form-grid {
     grid-template-columns:minmax(0,1fr);
     gap:12px;
   }
@@ -4671,9 +4464,9 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid
 #editor-fields > .full { grid-column:1 / -1; }
 .editor-section { min-width:0; padding:20px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
 .editor-section h3 { font-size:16px; margin:0 0 18px; }
-:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field { font-size:14px; font-weight:600; gap:8px; }
-:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { min-height:48px; font-size:16px; border-radius:12px; padding:12px 14px; background:var(--surface); }
-:is(#editor,#auth-dialog,#security-dialog,#health-pet-form,#match-profile-form) .field textarea { min-height:96px; line-height:1.5; resize:vertical; }
+:is(#editor,#auth-dialog,#security-dialog,#match-profile-form) .field { font-size:14px; font-weight:600; gap:8px; }
+:is(#editor,#auth-dialog,#security-dialog,#match-profile-form) .field :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { min-height:48px; font-size:16px; border-radius:12px; padding:12px 14px; background:var(--surface); }
+:is(#editor,#auth-dialog,#security-dialog,#match-profile-form) .field textarea { min-height:96px; line-height:1.5; resize:vertical; }
 #editor .form-actions { position:sticky; bottom:-28px; margin:0 -28px -28px; padding:20px 28px; background:var(--surface); z-index:2; }
 #editor .form-actions .btn, #security-form .btn { min-height:48px; }
 #editor .meal-schedule-field { grid-column:1/-1; }
@@ -4752,10 +4545,6 @@ h1,h2,h3 { text-wrap:balance; }
 .time-wheel-option[aria-selected="true"] { font-size:30px; font-weight:750; color:var(--accent-dark); }
 .time-wheel:focus-visible { outline:3px solid var(--accent); outline-offset:-3px; border-radius:16px; }
 .wheel-colon { font-size:28px; font-weight:700; padding-top:26px; text-align:center; }
-.manual-time { margin:12px 0 20px; border-bottom:1px solid var(--line); padding-bottom:12px; }
-.manual-time summary { min-height:44px; cursor:pointer; padding:10px 0; font-size:14px; font-weight:600; }
-.manual-time-fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:12px 0; }
-.manual-time input { width:100%; min-height:48px; font-size:18px; }
 @media(max-width:420px) { .time-wheels { gap:10px; } }
 .time-wheel { position:relative; z-index:1; }
 .time-wheel-frame::after { z-index:0; }
@@ -4794,9 +4583,6 @@ h1,h2,h3 { text-wrap:balance; }
 .settings-body label:has(#email-reminders) input { width:20px; min-height:20px; margin:0; }
 .settings-body .row.wrap { gap:10px; }
 #account-panel h2 { margin-top:0; }
-.pet-appearance { border-top:1px solid var(--line); margin-top:20px; padding:20px; display:grid; gap:16px; }
-.pet-appearance h3 { margin:0; }
-.pet-appearance .btn { justify-self:start; }
 .event-actions { align-items:flex-start; }
 .event-more { min-width:72px; }
 .event-more summary,.record-actions summary { cursor:pointer; min-height:44px; padding:10px 16px; border:1px solid var(--line); border-radius:10px; font-size:13px; font-weight:600; color:var(--ink); list-style:none; text-align:center; }
@@ -5063,6 +4849,31 @@ body:has(#petcare-startup) .connection-status[data-waiting="true"] { visibility:
 .profile-logout { margin-top: 14px; }
 #profile-settings[hidden], #install-petcare[hidden], #mail-code-note[hidden] { display: none; }
 
+.profile-feedback {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:12px 18px;
+  margin-top:14px;
+}
+.profile-feedback h2 { margin:0 0 4px; font-size:1rem; }
+.profile-feedback p { margin:0; color:var(--muted); }
+.guest-feedback { margin-top:18px; }
+.beta-feedback-button, .beta-feedback-contact { min-height:44px; }
+#beta-feedback-dialog { width:min(500px, calc(100% - 24px)); }
+.beta-feedback-team { margin:0 0 6px; padding-inline-end:40px; color:var(--muted); font-size:13px; font-weight:750; }
+#beta-feedback-dialog ul { margin-block:12px 18px; padding-inline-start:22px; }
+#beta-feedback-dialog li + li { margin-top:8px; }
+.beta-feedback-reward {
+  margin:0 0 16px;
+  padding:12px 14px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--soft);
+}
+.beta-feedback-contact { flex-wrap:wrap; justify-content:center; gap:4px 8px; width:100%; text-align:center; }
+
 .mail-code-note {
   position: relative;
   overflow: hidden;
@@ -5254,3 +5065,186 @@ body:has(#petcare-startup) .connection-status[data-waiting="true"] { visibility:
 .language-picker small { flex-basis: 100%; }
 .language-panel { margin-block: 14px; }
 .guest-preview .language-picker { justify-content: end; display: flex; }
+
+#editor[data-mode="pet"] .field[hidden],
+.pet-catalog-menu[hidden],
+.pet-catalog-empty[hidden] { display: none; }
+
+.pet-catalog-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.pet-catalog-chevron {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  margin: 0 3px 4px 0;
+}
+.pet-catalog-trigger[aria-expanded="true"] .pet-catalog-chevron { transform: rotate(225deg); }
+.pet-catalog-menu {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.pet-catalog-menu input { min-width: 0; width: 100%; }
+.pet-catalog-options { max-height: 220px; overflow: auto; }
+.pet-catalog-empty { margin: 0; padding: 6px 4px; }
+.pet-catalog-options button {
+  display: block;
+  min-height: 44px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.pet-catalog-options button:hover,
+.pet-catalog-options button[aria-pressed="true"] { background: var(--soft); }
+.pet-catalog-trigger:focus-visible,
+.pet-catalog-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.editor-section-note {
+  display: inline-block;
+  margin-inline-start: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+#pet-discard-dialog {
+  width: min(430px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: clamp(18px, 5vw, 28px);
+  background: var(--surface);
+  text-align: center;
+}
+#pet-discard-art {
+  width: 104px;
+  margin: 0 auto 12px;
+}
+#pet-discard-art svg { display: block; width: 100%; }
+#pet-discard-dialog h2 { font-size: clamp(20px, 5vw, 25px); margin-bottom: 8px; }
+#pet-discard-message { color: var(--muted); margin: 0 0 20px; }
+.pet-discard-actions { display: grid; gap: 8px; }
+.pet-discard-actions .btn { min-height: 44px; }
+
+#pet-cards { gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+#pet-cards .pet-card-visual { height: clamp(124px, 19vw, 152px); }
+#pet-cards .pet-card-visual .avatar { width: 132px; height: 132px; }
+#pet-cards .pet-card-visual::before { width: 136px; height: 136px; }
+#pet-cards .pet-card-body { padding: 16px; }
+#pet-cards .pet-card strong { font-size: clamp(20px, 3vw, 24px); }
+#pet-cards .pet-number { top: 8px; left: 10px; }
+#pet-cards .pet-visual-mark { top: 12px; right: 14px; }
+
+.care-pet-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: center;
+  gap: clamp(12px, 4vw, 28px);
+  margin-bottom: 20px;
+  padding: clamp(10px, 3vw, 20px);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--surface);
+}
+.care-pet-art {
+  inline-size: 100%;
+  max-inline-size: 232px;
+  aspect-ratio: 1;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--cover);
+}
+.care-pet-art :is(svg,img) { width: 100%; height: 100%; object-fit: cover; }
+.care-pet-copy { min-width: 0; overflow-wrap: anywhere; }
+.care-pet-copy h2 { margin: 0 0 6px; }
+.care-pet-copy p { margin: 0 0 12px; color: var(--muted); }
+.care-pet-copy .btn { min-height: 44px; white-space: normal; }
+@media (max-width: 600px) {
+  .care-pet-preview { grid-template-columns: minmax(132px, 1fr) minmax(0, 1fr); }
+  #pet-cards .pet-card-visual .avatar { width: 116px; height: 116px; }
+}
+
+.petcare-select-options {
+  position: fixed;
+  z-index: 200;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 10px 28px #17292029;
+}
+.petcare-select-options[hidden],
+.petcare-select-options > button[hidden] { display: none; }
+.petcare-select-options > button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.petcare-select-options > button:is(:hover,[data-active=true]):not(:disabled) { background: var(--soft); }
+.petcare-select-options > button[aria-selected=true] { color: var(--accent-dark); font-weight: 700; }
+.petcare-select-options > button:disabled { opacity: .5; cursor: default; }
+
+.feeding-history-summary { padding: 0; min-width: 0; }
+#feeding-history-open {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  padding: clamp(16px, 3vw, 24px);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+#feeding-history-open:hover { background: var(--soft); }
+#feeding-history-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.feeding-history-heading,
+.feeding-history-preview-row { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; }
+.feeding-history-heading { font-size: 19px; }
+#feeding-history-preview { display: grid; gap: 7px; min-width: 0; }
+.feeding-history-preview-row { border-top: 1px solid var(--line); padding-top: 8px; }
+.feeding-history-preview-row b { min-width: 0; overflow-wrap: anywhere; }
+.feeding-history-preview-row time { flex: none; color: var(--muted); font-size: 13px; }
+.feeding-history-link { color: var(--accent-dark); font-weight: 650; }
+#feeding-history-dialog { width: min(600px, calc(100% - 24px)); max-height: calc(100dvh - 24px); }
+#feeding-history-title { padding-inline-end: 44px; }

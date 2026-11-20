@@ -64,8 +64,10 @@ with sync_playwright() as p:
         expect(page.locator('[data-del-health]').first).to_be_hidden()
         page.locator('#health-records .record-actions summary').first.click()
         expect(page.locator('[data-del-health]').first).to_be_visible()
-        page.locator('#health-pet-profile summary').click()
-        page.locator('[data-extra-modal=avatar]').click()
+        expect(page.locator('#health-pet-form')).to_have_count(0)
+        page.evaluate("show('pets')")
+        page.locator('#pet-cards [data-open-pet]').first.click()
+        page.locator('#edit-pet-avatar').click()
         expect(page.locator('#editor [name=background]')).to_be_visible()
         page.locator('#close-editor').click()
         for action,status in [('complete','completed'),('skip','skipped')]:

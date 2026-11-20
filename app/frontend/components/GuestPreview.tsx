@@ -1,5 +1,6 @@
 import { uiText } from '../i18n';
 import { LanguagePicker } from '../i18n/LanguagePicker';
+import { BetaFeedbackButton } from './BetaFeedback';
 
 const sections = [
   { name: uiText("Питомцы"), icon: 'paw', detail: uiText("Карточки питомцев и совместный уход") },
@@ -29,5 +30,6 @@ export function GuestPreview() {
         </button>
       </li>)}
     </ul>
+    <div className="guest-feedback"><BetaFeedbackButton /></div>
   </section>;
 }

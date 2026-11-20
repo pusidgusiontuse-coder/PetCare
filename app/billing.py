@@ -19,16 +19,22 @@ from auth import get_current_user
 from database import get_db
 from features import enforce_quota
 from models import PremiumOrder, User
+from premium_pricing import RoublePrice, premium_prices
 
 
-PRICES = {1: 99, 3: 259, 6: 499, 12: 999}
 PROVIDER = 'https://api.yookassa.ru/v3/payments'
 PROVIDER_HOSTS = {'yookassa.ru', 'yoomoney.ru'}
+
+PRICE_CHANGED = {
+    'reason': 'premium_price_changed',
+    'message': 'Цена изменилась. Проверьте новую стоимость и повторите оплату.',
+}
 
 
 class Checkout(BaseModel):
     months: Literal[1, 3, 6, 12]
     order_id: UUID
+    quoted_price: RoublePrice | None = None
 
 
 class Notification(BaseModel):
@@ -101,8 +107,8 @@ def install_billing(app):
     router = APIRouter(prefix='/api/v1/billing')
 
     @router.get('/plans')
-    def plans():
-        return {'enabled': enabled(), 'test': os.getenv('YOOKASSA_TEST') == 'true', 'prices': PRICES}
+    def plans(db=Depends(get_db)):
+        return {'enabled': enabled(), 'test': os.getenv('YOOKASSA_TEST') == 'true', 'prices': premium_prices(db)}
 
     @router.post('/checkout')
     def checkout(data: Checkout, user=Depends(get_current_user), db=Depends(get_db)):
@@ -114,7 +120,10 @@ def install_billing(app):
         order = db.get(PremiumOrder, order_id)
         if order is None:
             enforce_quota(db, f'billing:{user.id}:{datetime.utcnow():%Y%m%d%H}', 12)
-            order = PremiumOrder(id=order_id, user_id=user.id, months=data.months, price=PRICES[data.months])
+            price = premium_prices(db)[str(data.months)]
+            if data.quoted_price is not None and data.quoted_price != price:
+                raise HTTPException(409, PRICE_CHANGED)
+            order = PremiumOrder(id=order_id, user_id=user.id, months=data.months, price=price)
             db.add(order)
             try:
                 db.commit()
@@ -125,6 +134,8 @@ def install_billing(app):
                 raise HTTPException(409, 'Не удалось сохранить заказ. Повторите попытку.')
         if order.user_id != user.id or order.months != data.months:
             raise HTTPException(404, 'Заказ не найден.')
+        if data.quoted_price is not None and data.quoted_price != order.price:
+            raise HTTPException(409, PRICE_CHANGED)
         if order.payment_id:
             result = provider_request('GET', order.payment_id)
         else:
@@ -191,10 +202,11 @@ def install_billing(app):
         return {'status': 'ok'}
 
     @app.get('/premium', response_class=HTMLResponse, include_in_schema=False)
-    def premium_page(lang: Literal['ru', 'en'] = 'ru'):
+    def premium_page(lang: Literal['ru', 'en'] = 'ru', db=Depends(get_db)):
+        prices = premium_prices(db)
         details = seller()
         if lang == 'en':
-            rows = ''.join(f'<li>{months} mo. — {price} ₽</li>' for months, price in PRICES.items())
+            rows = ''.join(f'<li>{months} mo. — {price} ₽</li>' for months, price in prices.items())
             return (
                 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" '
                 'content="width=device-width, initial-scale=1"><title>PetCare Premium</title>'
@@ -204,7 +216,7 @@ def install_billing(app):
                 '<p><a href="/premium">Official Premium terms (Russian)</a></p>'
                 '<p><a href="/#/profile">Open PetCare</a></p></main></html>'
             )
-        rows = ''.join(f'<li>{months} мес. — {price} ₽</li>' for months, price in PRICES.items())
+        rows = ''.join(f'<li>{months} мес. — {price} ₽</li>' for months, price in prices.items())
         text = ''
         if all(details.values()):
             contacts = ''.join(f'<li>{escape(value)}</li>' for key, value in details.items()
