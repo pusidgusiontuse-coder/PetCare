@@ -1,0 +1,25 @@
+body {
+  margin: 0;
+  background: #f6f2de;
+  color: #203c32;
+  font: 1.0625rem/1.65 system-ui, sans-serif;
+}
+header, main {
+  width: min(100% - 2.5rem, 44rem);
+  margin-inline: auto;
+}
+header { display: flex; justify-content: space-between; gap: 1rem; padding-block: 1.5rem; font-weight: 750; }
+main { padding-block: 1.75rem 4rem; }
+h1 { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.08; margin: 0; }
+h2 { font-size: 1.375rem; line-height: 1.25; margin: 2rem 0 .5rem; }
+p { margin: .625rem 0 1rem; }
+a { color: #21553f; }
+a:focus-visible { outline: 2px solid #21553f; outline-offset: 4px; }
+.cta {
+  display: inline-block;
+  padding: .65rem 1rem;
+  border-radius: .5rem;
+  background: #21553f;
+  color: white;
+  font-weight: 650;
+}
