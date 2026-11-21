@@ -1,4 +1,4 @@
-import { uiText } from '../i18n';
+import { language, uiText } from '../i18n';
 import { LanguagePicker } from '../i18n/LanguagePicker';
 import { BetaFeedbackButton } from './BetaFeedback';
 
@@ -20,6 +20,7 @@ export function GuestPreview() {
       <p className="guest-preview-label">{uiText("Гостевой режим")}</p>
       <h1 id="guest-preview-title">{uiText("Кабинет PetCare")}</h1>
       <p id="guest-preview-hint">{uiText("Войдите или зарегистрируйтесь, чтобы открыть разделы.")}</p>
+      <a href={language === 'en' ? '/about?lang=en' : '/about'}>{uiText("О возможностях PetCare")}</a>
     </header>
     <ul className="guest-grid">
       {sections.map(section => <li key={section.name}>

@@ -52,10 +52,12 @@ class SecurityMiddleware:
                     (b'referrer-policy', b'no-referrer'),
                     (b'permissions-policy', b'camera=(), microphone=(), geolocation=()'),
                 ])
-                if path in ('/', '/admin') or path.startswith('/static/') and any(k.lower() == b'content-type' and b'text/html' in v for k, v in response_headers): response_headers.append((b'content-security-policy', CSP.encode()))
+                if path in ('/', '/about', '/admin') or path.startswith('/static/') and any(k.lower() == b'content-type' and b'text/html' in v for k, v in response_headers): response_headers.append((b'content-security-policy', CSP.encode()))
                 if path in ('/', '/admin') or path.startswith('/api/') or path == '/static/frontend/index.html':
                     response_headers = [(k, v) for k, v in response_headers if k.lower() != b'cache-control']
                     response_headers.append((b'cache-control', b'no-store'))
+                if path in ('/admin', '/docs', '/redoc', '/openapi.json', '/static/frontend/index.html') or path.startswith('/api/'):
+                    response_headers.append((b'x-robots-tag', b'noindex'))
                 if self.production: response_headers.append((b'strict-transport-security', b'max-age=31536000'))
                 message = {**message, 'headers': response_headers}
             await send(message)

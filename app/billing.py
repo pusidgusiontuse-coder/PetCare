@@ -4,6 +4,7 @@ import calendar
 from datetime import datetime, timedelta
 from html import escape
 import os
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -24,6 +25,8 @@ from premium_pricing import RoublePrice, premium_prices
 
 PROVIDER = 'https://api.yookassa.ru/v3/payments'
 PROVIDER_HOSTS = {'yookassa.ru', 'yoomoney.ru'}
+PUBLISHED_OFFER = Path(__file__).resolve().parent.parent / 'legal' / 'premium.html'
+PUBLISHED_OFFER_PDF = PUBLISHED_OFFER.with_name('premium-offer.pdf')
 
 PRICE_CHANGED = {
     'reason': 'premium_price_changed',
@@ -52,7 +55,11 @@ def shop():
 
 
 def enabled():
-    return os.getenv('YOOKASSA_ENABLED') == 'true' and all(shop()) and all(seller())
+    return (
+        os.getenv('YOOKASSA_ENABLED') == 'true'
+        and all(shop())
+        and (all(seller()) or PUBLISHED_OFFER.is_file() and PUBLISHED_OFFER_PDF.is_file())
+    )
 
 
 def amount(rubles):

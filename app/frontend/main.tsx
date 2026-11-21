@@ -16,6 +16,9 @@ document.querySelectorAll('#petcare-startup p, #petcare-startup a').forEach(elem
   element.textContent = uiText(element.textContent ?? '');
 });
 
+const startupAbout = document.querySelector<HTMLAnchorElement>('#petcare-startup a[href="/about"]');
+if (startupAbout && language === 'en') startupAbout.href = '/about?lang=en';
+
 const container = document.getElementById('root');
 if (!container) throw new Error('PetCare root element is missing');
 

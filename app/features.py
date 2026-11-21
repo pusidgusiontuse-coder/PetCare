@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text, or_, update
 from sqlalchemy.exc import IntegrityError
@@ -488,6 +489,16 @@ def install_features(app):
         return JSONResponse(jsonable_encoder(result),headers={'Content-Disposition':'attachment; filename="petcare-export.json"'})
 
     app.include_router(router)
+
+    from public_pages import router as public_pages_router
+    # Replace the legacy frontend route with the shell that renders canonical metadata.
+    legacy_frontend = next(
+        route for route in app.routes
+        if isinstance(route, APIRoute) and route.name == 'serve_frontend' and route.path == '/'
+    )
+    app.routes.remove(legacy_frontend)
+    app.include_router(public_pages_router)
+
     static=Path(__file__).parent/'static'
     @app.get('/manifest.webmanifest',include_in_schema=False)
     def manifest(lang: Literal['ru', 'en'] = 'ru'):

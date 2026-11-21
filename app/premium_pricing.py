@@ -29,7 +29,7 @@ def premium_prices(db):
     setting = db.get(SiteSetting, PRICE_SETTING)
     if setting is None:
         return DEFAULT_PRICES.copy()
-    return PremiumPrices.model_validate_json(setting.value).prices
+    return PremiumPrices.model_validate({'prices': json.loads(setting.value)}).prices
 
 
 def set_premium_prices(db, data: PremiumPrices):
