@@ -2,36 +2,33 @@ import { htmlUiText, uiText } from '../../i18n';
 import { catalogName, other, searchCatalog, speciesCatalog, type CatalogEntry } from './catalog';
 
 export function petCatalogMarkup() {
-  function picker(key: 'species' | 'breed', label: string, placeholder: string, search: string) {
+  function picker(key: 'species' | 'breed', label: string, placeholder: string) {
     return `<div class="field full pet-catalog-picker" data-pet-picker="${key}" ${key === 'breed' ? 'hidden' : ''}>
-      <span id="pet-${key}-label">${htmlUiText(label)}</span>
+      <label for="pet-${key}-search">${htmlUiText(label)}</label>
       <input type="hidden" name="${key}">
-      <button type="button" class="pet-catalog-trigger" aria-labelledby="pet-${key}-label pet-${key}-choice"
-        aria-expanded="false" aria-controls="pet-${key}-menu" data-catalog-trigger>
-        <span id="pet-${key}-choice" data-catalog-choice>${htmlUiText(placeholder)}</span>
+      <div class="pet-catalog-control">
+        <input id="pet-${key}-search" type="text" role="combobox" aria-autocomplete="list"
+          aria-expanded="false" aria-controls="pet-${key}-options"
+          autocomplete="off" maxlength="80" placeholder="${htmlUiText(placeholder)}" data-catalog-search>
         <span class="pet-catalog-chevron" aria-hidden="true"></span>
-      </button>
-      <div id="pet-${key}-menu" class="pet-catalog-menu" hidden>
-        <input type="search" autocomplete="off" maxlength="80" aria-label="${htmlUiText(search)}"
-          placeholder="${htmlUiText(search)}" data-catalog-search>
+      </div>
+      <div class="pet-catalog-menu" hidden>
         <p class="small pet-catalog-empty" role="status" hidden>${htmlUiText('Ничего не найдено')}</p>
-        <div class="pet-catalog-options" data-catalog-options></div>
+        <div id="pet-${key}-options" class="pet-catalog-options" role="listbox"
+          aria-label="${htmlUiText(label)}" data-catalog-options></div>
       </div>
     </div>`;
   }
-  return picker('species', 'Вид животного', 'Выбрать вид', 'Поиск по видам') +
-    picker('breed', 'Порода или разновидность', 'Выбрать породу', 'Поиск по породам') +
+  return picker('species', 'Вид животного', 'Поиск по видам') +
+    picker('breed', 'Порода или разновидность', 'Поиск по породам') +
     `<label class="field full pet-catalog-custom" hidden>${htmlUiText('Своя порода или разновидность')}
       <input type="text" name="customBreed" maxlength="100" disabled>
     </label>`;
 }
 
-type CatalogSelection<T> = (entry: T) => void;
+type CatalogSelection<T> = (entry: T | undefined) => void;
 
 function bindPicker<T extends CatalogEntry>(root: HTMLElement, onSelect: CatalogSelection<T>, keepLast?: T) {
-  const trigger = root.querySelector<HTMLButtonElement>('[data-catalog-trigger]')!;
-  const choice = root.querySelector<HTMLElement>('[data-catalog-choice]')!;
-  const placeholder = choice.textContent ?? '';
   const menu = root.querySelector<HTMLElement>('.pet-catalog-menu')!;
   const search = root.querySelector<HTMLInputElement>('[data-catalog-search]')!;
   const results = root.querySelector<HTMLElement>('[data-catalog-options]')!;
@@ -39,73 +36,119 @@ function bindPicker<T extends CatalogEntry>(root: HTMLElement, onSelect: Catalog
   const value = root.querySelector<HTMLInputElement>('input[type=hidden]')!;
   let entries: readonly T[] = [];
   let selected: T | undefined;
+  let matches: readonly T[] = [];
+  let buttons: HTMLButtonElement[] = [];
+  let highlighted = -1;
 
-  function close(restoreFocus = false) {
+  function close() {
     menu.hidden = true;
-    trigger.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) trigger.focus();
+    search.setAttribute('aria-expanded', 'false');
+    search.removeAttribute('aria-activedescendant');
   }
 
   function choose(option: T) {
     const changed = selected !== option;
     selected = option;
-    if (changed) value.value = option.ru;
-    choice.textContent = catalogName(option);
-    close(true);
+    search.value = catalogName(option);
+    close();
     if (changed) {
+      value.value = option.ru;
       onSelect(option);
       value.dispatchEvent(new Event('change', { bubbles: true }));
     }
   }
 
-  function render() {
-    const matches = searchCatalog(entries, search.value);
+  function render(query: string) {
+    matches = searchCatalog(entries, query);
     const visible = keepLast ? [...matches, keepLast] : matches;
     empty.hidden = matches.length > 0;
-    results.replaceChildren(...visible.map(option => {
+    highlighted = -1;
+    search.removeAttribute('aria-activedescendant');
+    buttons = visible.map((option, index) => {
       const button = document.createElement('button');
       button.type = 'button';
+      button.tabIndex = -1;
+      button.id = results.id + '-' + index;
       button.textContent = catalogName(option);
-      button.setAttribute('aria-pressed', String(option === selected));
-      button.addEventListener('click', () => choose(option));
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', String(option === selected));
+      button.addEventListener('click', () => {
+        choose(option);
+        search.blur();
+      });
       return button;
-    }));
+    });
+    results.replaceChildren(...buttons);
+    results.scrollTop = 0;
   }
 
-  trigger.addEventListener('click', () => {
-    if (!menu.hidden) { close(); return; }
-    search.value = '';
+  function open(query: string) {
     menu.hidden = false;
-    trigger.setAttribute('aria-expanded', 'true');
-    render();
-    search.focus();
-  });
-  search.addEventListener('input', render);
-  search.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      const first = results.querySelector('button');
-      first?.click();
+    search.setAttribute('aria-expanded', 'true');
+    render(query);
+  }
+
+  function openOnFocus() {
+    if (!menu.hidden) return;
+    open(selected ? '' : search.value);
+    if (selected) search.select();
+  }
+
+  search.addEventListener('focus', openOnFocus);
+  search.addEventListener('click', openOnFocus);
+  search.addEventListener('input', () => {
+    if (selected) {
+      selected = undefined;
+      value.value = '';
+      onSelect(undefined);
+      value.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    open(search.value);
   });
-  root.addEventListener('keydown', event => {
-    if (menu.hidden) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      close(true);
+  function commitExact() {
+    if (menu.hidden || selected) return;
+    const text = search.value.trim().toLocaleLowerCase();
+    const exact = [...matches, ...(keepLast ? [keepLast] : [])].find(option =>
+      [option.ru, option.en, ...option.aliases].some(name => name.toLocaleLowerCase() === text));
+    if (exact) choose(exact);
+  }
+
+  search.addEventListener('blur', () => {
+    commitExact();
+    close();
+  });
+  // A pointer selecting an option must not blur and close the list before click.
+  results.addEventListener('pointerdown', event => {
+    if (event.button === 0 && (event.target as HTMLElement).closest('button')) event.preventDefault();
+  });
+
+  search.addEventListener('keydown', event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Tab') {
+      commitExact();
       return;
     }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    event.preventDefault();
-    const buttons = [...results.querySelectorAll('button')];
-    const position = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === 'ArrowDown' ? position + 1 : position - 1;
-    if (next < 0) search.focus();
-    else buttons[Math.min(next, buttons.length - 1)]?.focus();
-  });
-  root.addEventListener('focusout', event => {
-    if (event.relatedTarget instanceof Node && !root.contains(event.relatedTarget)) close();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (menu.hidden) { openOnFocus(); return; }
+      const option = highlighted < 0 ? matches[0] : (matches[highlighted] ?? keepLast);
+      if (option) choose(option);
+    } else if (event.key === 'Escape' && !menu.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      openOnFocus();
+      if (!buttons.length) return;
+      const next = event.key === 'ArrowDown' ? highlighted + 1 : (highlighted < 0 ? buttons.length - 1 : highlighted - 1);
+      buttons[highlighted]?.removeAttribute('data-active');
+      highlighted = Math.max(0, Math.min(next, buttons.length - 1));
+      const button = buttons[highlighted];
+      button.dataset.active = 'true';
+      search.setAttribute('aria-activedescendant', button.id);
+      button.scrollIntoView({ block: 'nearest' });
+    }
   });
 
   return {
@@ -113,7 +156,7 @@ function bindPicker<T extends CatalogEntry>(root: HTMLElement, onSelect: Catalog
       entries = options;
       selected = undefined;
       value.value = '';
-      choice.textContent = placeholder;
+      search.value = '';
       close();
     },
     value,
@@ -144,15 +187,15 @@ export function bindPetCatalog(form: HTMLFormElement) {
   const breedPicker = bindPicker(breedRoot, option => {
     const manual = option === other;
     showCustom(manual);
-    showDetails(!manual);
+    showDetails(Boolean(option && !manual));
     if (manual) {
       breedPicker.value.value = '';
       customBreed.focus();
     }
   }, other);
   const speciesPicker = bindPicker<(typeof speciesCatalog)[number]>(speciesRoot, option => {
-    breedRoot.hidden = false;
-    breedPicker.replaceOptions(option.breeds);
+    breedRoot.hidden = !option;
+    breedPicker.replaceOptions(option?.breeds ?? []);
     showCustom(false);
     showDetails(false);
   });
