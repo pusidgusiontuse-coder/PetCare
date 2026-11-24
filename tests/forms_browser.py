@@ -1,6 +1,5 @@
 """Shared forms/calendar regression checks against an isolated demo server."""
 import os
-import json
 from playwright.sync_api import sync_playwright, expect
 
 BASE = os.environ.get('PETCARE_TEST_URL', 'http://127.0.0.1:8002')
@@ -8,16 +7,15 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     for width, height in ((1440, 900), (375, 812), (812, 375)):
         context = browser.new_context(locale='ru-RU', viewport={'width':width,'height':height}, reduced_motion='reduce')
-        result = context.request.post(BASE + '/api/v1/auth/demo-login/1')
+        result = context.request.post(BASE + '/api/v1/auth/demo-login/1', headers={'X-PetCare-Browser': '1'})
         assert result.ok
-        token = result.json()['access_token']
         context.add_init_script("window.__PETCARE_TEST__=true;")
-        context.add_init_script('localStorage.setItem("petcare_jwt",' + json.dumps(token) + ')')
         page = context.new_page(); errors=[]; friends_requests=[]
         page.on('request', lambda request: friends_requests.append(request.url) if '/match-' in request.url else None)
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(BASE); page.wait_for_load_state('networkidle')
         page.wait_for_function('() => state.pets.length > 0')
+        assert not friends_requests, 'Pet Match should not be requested on the first screen'
         page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.
         for kind in ('pet','pet-edit','health','prescription','weight','activity'):
             page.evaluate('(kind) => openModal(kind)', kind)

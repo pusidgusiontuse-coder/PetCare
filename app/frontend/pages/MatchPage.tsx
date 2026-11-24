@@ -150,8 +150,12 @@ export function MatchPage() {
                 <textarea name="bio" rows={4} placeholder={uiText("Расскажите о характере питомца и кого ищете для прогулок или общения")} />
               </label>
               <ProfileGallery />
+              <label className="full">
+                <input name="is_published" type="checkbox" />
+                {uiText(" Показывать анкету другим владельцам")}
+              </label>
               <div className="form-actions full" style={{"justifyContent": "flex-start"}}>
-                <button type="submit" className="btn primary" id="btn-save-match-profile">{uiText("Опубликовать анкету")}</button>
+                <button type="submit" className="btn primary" id="btn-save-match-profile">{uiText("Сохранить анкету")}</button>
                 <span id="match-profile-feedback" className="small" role="status" aria-live="polite" />
               </div>
             </form>

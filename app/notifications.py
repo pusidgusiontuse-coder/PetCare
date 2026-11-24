@@ -59,7 +59,7 @@ def run(now=None):
         for pet_id,event_key,title,kind in events:
             pet=db.get(models.Pet,pet_id)
             if not pet: continue
-            ids={pet.owner_id}|{m.user_id for m in pet.members if not m.expires_at or m.expires_at>datetime.utcnow()}
+            ids={pet.owner_id}|{m.user_id for m in pet.members if m.role in {'viewer', 'editor', 'co_owner'} and (not m.expires_at or m.expires_at > datetime.utcnow())}
             for uid in ids:
                 pref=db.get(models.NotificationPreference,uid); settings=json.loads(pref.data) if pref else {}
                 if kind not in settings.get('types',['Кормление','Препарат','Процедура','Ветеринар','Прогулка']): continue

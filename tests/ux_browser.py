@@ -9,11 +9,9 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     for width, height in ((1440, 900), (375, 812), (812, 375)):
         context = browser.new_context(locale='ru-RU', viewport={'width': width, 'height': height})
-        response = context.request.post(BASE + '/api/v1/auth/demo-login/1')
+        response = context.request.post(BASE + '/api/v1/auth/demo-login/1', headers={'X-PetCare-Browser': '1'})
         assert response.ok, response.text()
-        token = response.json()['access_token']
         context.add_init_script("window.__PETCARE_TEST__=true;")
-        context.add_init_script('localStorage.setItem("petcare_jwt", ' + __import__('json').dumps(token) + ')')
         page = context.new_page()
         page.emulate_media(reduced_motion='reduce')
         errors = []

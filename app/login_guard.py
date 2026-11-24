@@ -14,6 +14,7 @@ from settings import SECRET_KEY
 ACCOUNT_LIMIT = 5
 ACCOUNT_PAUSE_SECONDS = 30
 IP_LIMIT = 50
+IP_PAUSE = timedelta(minutes=15)
 
 
 def peer_ip(request):
@@ -52,11 +53,14 @@ def support_contact(db):
 
 
 def _check(db, ip_state, account, now):
-    if ip_state and ip_state.failures >= IP_LIMIT:
-        raise HTTPException(403, detail={
-            'message': 'Вход с этого IP заблокирован. Обратитесь в поддержку.',
-            'reason': 'ip_blocked', 'support_contact': support_contact(db),
-        })
+    if ip_state and ip_state.failures >= IP_LIMIT and ip_state.blocked_until:
+        remaining = (ip_state.blocked_until + IP_PAUSE - now).total_seconds()
+        if remaining > 0:
+            seconds = ceil(remaining)
+            raise HTTPException(403, headers={'Retry-After': str(seconds)}, detail={
+                'message': 'Вход с этого IP временно ограничен. Попробуйте позже.',
+                'reason': 'ip_blocked', 'retry_after': seconds, 'support_contact': support_contact(db),
+            })
     if account and account.blocked_until and account.blocked_until > now:
         seconds = ceil((account.blocked_until - now).total_seconds())
         raise HTTPException(429, headers={'Retry-After': str(seconds)}, detail={
@@ -92,6 +96,9 @@ def finish_attempt(db, ip, key, *, failed, reset):
     account = db.scalar(select(models.LoginGuard).where(models.LoginGuard.key == key).with_for_update())
     now = datetime.utcnow()
     _check(db, ip_state, account, now)
+    if ip_state and ip_state.failures >= IP_LIMIT:
+        ip_state.failures = 0
+        ip_state.blocked_until = None
     if account.blocked_until:
         account.blocked_until = None
         account.failures = 0
@@ -104,7 +111,7 @@ def finish_attempt(db, ip, key, *, failed, reset):
         if ip_state:
             ip_state.failures += 1
             if ip_state.failures >= IP_LIMIT:
-                ip_state.blocked_until = now  # Timestamp of a persistent IP block.
+                ip_state.blocked_until = now  # Keep the start timestamp used by existing records.
     blocked = None
     try:
         _check(db, ip_state, account, now)

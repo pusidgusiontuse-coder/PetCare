@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, field_validator
@@ -199,7 +199,7 @@ def premium(u):
 def enforce_pet_limit(db, user):
     if premium(user): return
     own=db.query(models.Pet).filter(models.Pet.owner_id==user.id).count()
-    shared=db.query(models.PetMember).filter(models.PetMember.user_id==user.id,or_(models.PetMember.expires_at.is_(None),models.PetMember.expires_at>datetime.utcnow())).count()
+    shared=db.query(models.PetMember).filter(models.PetMember.user_id==user.id,models.PetMember.role.in_(['viewer','editor','co_owner']),or_(models.PetMember.expires_at.is_(None),models.PetMember.expires_at>datetime.utcnow())).count()
     if own+shared>=3: raise HTTPException(403,'В бесплатной версии можно добавить до трёх питомцев. Для большего количества нужен платный доступ.')
 
 def user_json(u):
@@ -225,7 +225,10 @@ def reminder_transition(db, reminder, previous):
     return values
 
 def install_features(app):
-    from auth import get_current_user, verify_password, get_password_hash, create_access_token
+    from auth import (
+        ADMIN_SESSION_TTL, SESSION_TTL, clear_browser_session, create_access_token,
+        get_current_user, get_password_hash, session_response, verify_password,
+    )
     router = APIRouter(prefix='/api/v1')
     replaced = {'/api/v1/auth/register','/api/v1/auth/login','/api/v1/auth/user','/api/v1/auth/profile','/api/v1/auth/session','/api/v1/auth/me','/api/v1/documents/{doc_id}'}
     # Preserve document delete: replaced below with a reversible server operation.
@@ -244,7 +247,7 @@ def install_features(app):
         return {'support_contact': support_contact(db)}
 
     @router.post('/auth/login')
-    def login(data: LoginInput, request: Request, db=Depends(get_db)):
+    def login(data: LoginInput, request: Request, response: Response, db=Depends(get_db)):
         from auth import DUMMY_PASSWORD_HASH
         identity = data.email.strip().lower()
         ip = peer_ip(request)
@@ -273,11 +276,11 @@ def install_features(app):
         if not allowed:
             raise HTTPException(401, 'Неверная почта, логин или пароль')
         current = db.get(models.User, uid)
-        ttl = timedelta(hours=8) if current.is_admin else None
+        ttl = ADMIN_SESSION_TTL if current.is_admin else SESSION_TTL
         token = create_access_token({'sub': str(uid)}, expires_delta=ttl,
                                     device=request.headers.get('user-agent', 'Браузер')[:200],
                                     ip_address=ip, expected_version=version)
-        return {'access_token': token, 'token_type': 'bearer', 'user': user_json(current)}
+        return session_response(request, response, token, user_json(current), ttl)
 
     @router.get('/auth/session')
     @router.get('/auth/me')
@@ -308,7 +311,7 @@ def install_features(app):
         return issue_code(db,email,data.purpose,u.id,payload,language=request.headers.get('X-PetCare-Language'))
 
     @router.post('/auth/confirm')
-    def confirm(data: CodeConfirm, request: Request, db=Depends(get_db)):
+    def confirm(data: CodeConfirm, request: Request, response: Response, db=Depends(get_db)):
         check_ip(db, peer_ip(request))
         item=db.get(models.EmailChallenge,data.challenge_id)
         if item and item.purpose in ('password_change','password_reset'): password_ok(data.new_password or '')
@@ -335,12 +338,18 @@ def install_features(app):
             if u.is_admin: raise HTTPException(400, 'Перед удалением снимите роль администратора')
             delete_account_data(db, u)
             db.commit()
+            clear_browser_session(response)
             return {'deleted': True}
         elif item.purpose=='verify_email': u.email_verified=True
         if item.purpose in ('password_reset','password_change','email_change'):
             db.query(models.EmailChallenge).filter(models.EmailChallenge.user_id==u.id).update({'consumed':True})
         db.commit(); db.refresh(u)
-        return {'access_token':create_access_token({'sub':str(u.id)}, expires_delta=timedelta(hours=8) if u.is_admin else None, device=request.headers.get('user-agent', 'Браузер')[:200], ip_address=peer_ip(request)),'token_type':'bearer','user':user_json(u)}
+        ttl = ADMIN_SESSION_TTL if u.is_admin else SESSION_TTL
+        token = create_access_token(
+            {'sub': str(u.id)}, expires_delta=ttl,
+            device=request.headers.get('user-agent', 'Браузер')[:200], ip_address=peer_ip(request),
+        )
+        return session_response(request, response, token, user_json(u), ttl)
 
     @router.put('/auth/user')
     @router.patch('/auth/profile')
@@ -365,26 +374,33 @@ def install_features(app):
         s.revoked=True; db.commit(); return {'status':'ok'}
 
     @router.post('/auth/logout')
-    def logout(request:Request,u=Depends(get_current_user),db=Depends(get_db)):
-        db.get(models.LoginSession,request.state.session_id).revoked=True; db.commit(); return {'status':'ok'}
+    def logout(request:Request,response:Response,u=Depends(get_current_user),db=Depends(get_db)):
+        db.get(models.LoginSession, request.state.session_id).revoked = True
+        db.commit()
+        clear_browser_session(response)
+        return {'status': 'ok'}
 
     @router.post('/auth/logout-all')
-    def logout_all(u=Depends(get_current_user),db=Depends(get_db)):
-        u.token_version+=1; db.query(models.LoginSession).filter(models.LoginSession.user_id==u.id).update({'revoked':True}); db.commit(); return {'status':'ok'}
+    def logout_all(response:Response,u=Depends(get_current_user),db=Depends(get_db)):
+        u.token_version += 1
+        db.query(models.LoginSession).filter(models.LoginSession.user_id == u.id).update({'revoked': True})
+        db.commit()
+        clear_browser_session(response)
+        return {'status': 'ok'}
 
-    def owner(db,pet_id,u):
-        p=db.get(models.Pet,pet_id)
+    def owner(db,pet_id,u, *, lock=False):
+        p=db.get(models.Pet,pet_id,with_for_update=lock)
         if not p or p.owner_id!=u.id: raise HTTPException(403,'Только владелец управляет доступом')
         return p
 
     @router.get('/pets/{pet_id}/members')
     def members(pet_id:int,u=Depends(get_current_user),db=Depends(get_db)):
         owner(db,pet_id,u)
-        return [dict(id=m.id,user_id=m.user_id,email=m.user.email,name=m.user.full_name,role=m.role,expires_at=m.expires_at) for m in db.query(models.PetMember).filter(models.PetMember.pet_id==pet_id).all()]
+        return [dict(id=m.id,user_id=m.user_id,email=m.user.email,name=m.user.full_name,role=m.role,expires_at=m.expires_at) for m in db.query(models.PetMember).filter(models.PetMember.pet_id==pet_id,models.PetMember.role.in_(['viewer','editor','co_owner'])).all()]
 
     @router.post('/pets/{pet_id}/members')
     def grant(pet_id:int,data:MemberChange,u=Depends(get_current_user),db=Depends(get_db)):
-        owner(db,pet_id,u)
+        owner(db,pet_id,u,lock=True)
         try: email=normalize_email(data.email)
         except ValueError: raise HTTPException(422,'Неверная почта')
         target=db.query(models.User).filter(models.User.email==email).first()
@@ -393,19 +409,37 @@ def install_features(app):
         expiry=data.expires_at
         if expiry and expiry.tzinfo: expiry=expiry.astimezone(ZoneInfo('UTC')).replace(tzinfo=None)
         if expiry and expiry<=datetime.utcnow(): raise HTTPException(422,'Срок должен быть в будущем')
-        m=db.query(models.PetMember).filter(models.PetMember.pet_id==pet_id,models.PetMember.user_id==target.id).first()
-        if not m: enforce_pet_limit(db,target); m=models.PetMember(pet_id=pet_id,user_id=target.id); db.add(m)
-        m.role=data.role; m.expires_at=expiry; db.commit(); return {'status':'ok'}
+        m=db.query(models.PetMember).filter(models.PetMember.pet_id==pet_id,models.PetMember.user_id==target.id).with_for_update().first()
+        if not m or m.role == 'revoked' or (m.expires_at and m.expires_at <= datetime.utcnow()):
+            enforce_pet_limit(db, target)
+        if not m:
+            m = models.PetMember(pet_id=pet_id, user_id=target.id)
+            db.add(m)
+        m.role = data.role
+        m.expires_at = expiry
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if not db.query(models.PetMember).filter_by(pet_id=pet_id, user_id=target.id).first():
+                raise
+            raise HTTPException(409, 'Доступ уже изменился. Повторите операцию.') from None
+        return {'status': 'ok'}
 
     @router.delete('/pets/{pet_id}/members/{member_id}')
     def remove_member(pet_id:int,member_id:int,u=Depends(get_current_user),db=Depends(get_db)):
-        owner(db,pet_id,u); m=db.get(models.PetMember,member_id)
-        if not m or m.pet_id!=pet_id: raise HTTPException(404,'Участник не найден')
-        db.delete(m); db.commit(); return {'status':'ok'}
+        pet = owner(db, pet_id, u, lock=True)
+        member = db.get(models.PetMember, member_id, with_for_update=True)
+        if not member or member.pet_id != pet_id or member.role == 'revoked':
+            raise HTTPException(404, 'Участник не найден')
+        db.query(models.PetMember).filter_by(pet_id=pet_id, user_id=member.user_id).update({'role': 'revoked'})
+        pet.share_code = models.generate_pet_share_code()
+        db.commit()
+        return {'status': 'ok', 'share_code': pet.share_code}
 
     @router.post('/pets/{pet_id}/rotate-code')
     def rotate(pet_id:int,u=Depends(get_current_user),db=Depends(get_db)):
-        p=owner(db,pet_id,u); p.share_code=models.generate_pet_share_code(); db.commit(); return {'share_code':p.share_code}
+        p=owner(db,pet_id,u,lock=True); p.share_code=models.generate_pet_share_code(); db.commit(); return {'share_code':p.share_code}
 
     @router.get('/notifications/settings')
     def preferences(u=Depends(get_current_user),db=Depends(get_db)):
@@ -470,6 +504,8 @@ def install_features(app):
         v.pop('id',None)
         from datetime import date
         if v.get('date'): v['date']=date.fromisoformat(v['date'])
+        from uploads import enforce_attachment_quota
+        enforce_attachment_quota(db, r.pet_id, v.get('file_data'))
         db.add(models.Document(**v)); db.commit(); return {'status':'ok'}
 
     @router.get('/billing/status')
@@ -506,8 +542,10 @@ def install_features(app):
         return FileResponse(static/name, media_type='application/manifest+json')
     @app.get('/sw.js',include_in_schema=False)
     def service_worker(): return FileResponse(static/'sw.js',media_type='text/javascript',headers={'Cache-Control':'no-cache','Service-Worker-Allowed':'/'})
+    from fastapi.middleware.gzip import GZipMiddleware
     from fastapi.staticfiles import StaticFiles
-    app.mount('/static',StaticFiles(directory=static),name='static')
+    app.mount('/static', GZipMiddleware(StaticFiles(directory=static), minimum_size=1024, compresslevel=4),
+              name='static')
 
     @app.get('/admin', include_in_schema=False)
     def admin_shell():

@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from auth import get_current_user, get_password_hash, verify_password
 from database import get_db
 from features import Registration, delete_account_data, enforce_quota, password_ok, public_email, user_json
-from login_guard import IP_LIMIT, account_key, insert_if_absent, support_contact
+from login_guard import IP_LIMIT, IP_PAUSE, account_key, insert_if_absent, support_contact
 import models
 from premium_pricing import PremiumPrices, premium_prices, set_premium_prices
 from server_metrics import server_metrics
@@ -296,7 +296,8 @@ def install_admin(app):
     @router.get('/blocked-ips')
     def blocked_ips(offset: int = Query(0, ge=0), actor=Depends(require_admin), db=Depends(get_db)):
         query = db.query(models.LoginGuard).filter(models.LoginGuard.key.startswith('ip:'),
-                                                   models.LoginGuard.failures >= IP_LIMIT)
+                                                   models.LoginGuard.failures >= IP_LIMIT,
+                                                   models.LoginGuard.blocked_until > datetime.utcnow() - IP_PAUSE)
         rows = query.order_by(models.LoginGuard.blocked_until.desc(), models.LoginGuard.key).offset(offset).limit(50)
         return {'ips': [{'ip_address': row.key[3:], 'blocked_at': row.blocked_until,
                          'failures': row.failures} for row in rows], 'total': query.count()}

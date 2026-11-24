@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text as SQLText, JSON
 from sqlalchemy.dialects.mysql import MEDIUMTEXT, DATETIME, DOUBLE
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import column_property, deferred, relationship
 
 Text = SQLText().with_variant(MEDIUMTEXT(), "mysql")
 DateTime = DateTime().with_variant(DATETIME(fsp=6), "mysql")
@@ -97,6 +97,8 @@ class HealthRecord(Base):
     next_date = Column(Date, nullable=True)
     file_name = Column(String(255), nullable=True)
     file_data = Column(Text, nullable=True)
+    has_attachment = column_property(file_data.is_not(None) & file_data.like("data:%"))
+    file_data = deferred(file_data)
 
     pet = relationship("Pet", back_populates="health_records")
 
@@ -211,6 +213,8 @@ class Document(Base):
     date = Column(Date, default=date.today)
     file_name = Column(String(255), nullable=True)
     file_data = Column(Text, nullable=True)
+    has_attachment = column_property(file_data.is_not(None) & file_data.like("data:%"))
+    file_data = deferred(file_data)
 
     pet = relationship("Pet", back_populates="documents")
 

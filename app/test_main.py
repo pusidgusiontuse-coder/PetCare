@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 warnings.simplefilter("ignore")
 
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 
 import auth
 import main

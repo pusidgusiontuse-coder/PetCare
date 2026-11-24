@@ -6,9 +6,12 @@ from datetime import timedelta, date, datetime
 from typing import List, Optional
 from pathlib import Path
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
+from urllib.parse import quote
+from uploads import enforce_attachment_quota, validate_attachment
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, select
 
@@ -16,7 +19,7 @@ from settings import ENABLE_DEMO_LOGIN, PRODUCTION
 import models
 import schemas
 from database import engine, get_db
-from auth import get_password_hash, verify_password, create_access_token, get_current_user
+from auth import get_password_hash, verify_password, create_access_token, get_current_user, session_response
 
 # Schema changes are applied explicitly before starting workers.
 from schema import check_schema
@@ -688,8 +691,8 @@ def seed_demo_account(db: Session, account_id: int) -> models.User:
     return user
 
 
-@app.post("/api/v1/auth/demo-login/{account_id}", response_model=schemas.TokenResponse, tags=["Авторизация и профиль"], summary="Быстрый вход в демо-аккаунт (1 или 2)")
-def demo_login(account_id: int, db: Session = Depends(get_db)):
+@app.post("/api/v1/auth/demo-login/{account_id}", tags=["Авторизация и профиль"], summary="Быстрый вход в демо-аккаунт (1 или 2)")
+def demo_login(account_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
     if not ENABLE_DEMO_LOGIN:
         raise HTTPException(status_code=404, detail="Демо-вход отключён")
     try:
@@ -697,7 +700,7 @@ def demo_login(account_id: int, db: Session = Depends(get_db)):
             account_id = 1
         user = seed_demo_account(db, account_id)
         token = create_access_token(data={"sub": str(user.id)})
-        return {"access_token": token, "token_type": "bearer", "user": user}
+        return session_response(request, response, token, schemas.UserOut.model_validate(user, from_attributes=True))
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось подготовить демо-аккаунт")
@@ -780,7 +783,7 @@ def join_pet_by_code(
     if not code:
         raise HTTPException(status_code=400, detail="Введите код совместного ухода")
 
-    pet = db.query(models.Pet).filter(models.Pet.share_code == code).first()
+    pet = db.query(models.Pet).filter(models.Pet.share_code == code).with_for_update().first()
     if not pet:
         raise HTTPException(status_code=404, detail="Питомец с таким кодом не найден. Проверьте правильность кода.")
 
@@ -791,7 +794,7 @@ def join_pet_by_code(
     existing = db.query(models.PetMember).filter(
         models.PetMember.pet_id == pet.id,
         models.PetMember.user_id == current_user.id
-    ).first()
+    ).with_for_update().first()
     if existing:
         if existing.role not in {'viewer', 'editor', 'co_owner'}:
             raise HTTPException(403, 'Доступ отозван. Обратитесь к владельцу.')
@@ -812,7 +815,14 @@ def join_pet_by_code(
         icon="🐾"
     ))
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(models.PetMember).filter_by(pet_id=pet.id, user_id=current_user.id).first()
+        if existing is None:
+            raise
+        raise HTTPException(409, "Доступ уже изменился. Обновите страницу.") from None
     db.refresh(pet)
     pet.is_shared = True
     return pet_response(pet, current_user.id)
@@ -832,7 +842,7 @@ def get_user_pets(
         if not p.share_code:
             p.share_code = models.generate_pet_share_code()
             needs_commit = True
-        p.is_shared = (p.owner_id != current_user.id or bool(p.members))
+        p.is_shared = (p.owner_id != current_user.id or any(m.role in {'viewer', 'editor', 'co_owner'} for m in p.members))
     if needs_commit:
         db.commit()
     return [pet_response(p, current_user.id) for p in pets]
@@ -845,7 +855,7 @@ def get_pet(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
-    pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
+    pet.is_shared = (pet.owner_id != current_user.id or any(m.role in {'viewer', 'editor', 'co_owner'} for m in pet.members))
     return pet_response(pet, current_user.id, detail=True)
 
 
@@ -864,7 +874,7 @@ def update_pet(
             setattr(pet, k, v)
     db.commit()
     db.refresh(pet)
-    pet.is_shared = (pet.owner_id != current_user.id or bool(pet.members))
+    pet.is_shared = (pet.owner_id != current_user.id or any(m.role in {'viewer', 'editor', 'co_owner'} for m in pet.members))
     return pet_response(pet, current_user.id)
 
 
@@ -874,6 +884,7 @@ def delete_pet(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
+    db.get(models.Pet, pet_id, with_for_update=True)
     pet = get_user_pet_or_404(pet_id, current_user.id, db)
     if pet.owner_id == current_user.id:
         # Hidden PetMatch records still have enforced PostgreSQL foreign keys.
@@ -889,8 +900,8 @@ def delete_pet(
         member = db.query(models.PetMember).filter(
             models.PetMember.pet_id == pet_id,
             models.PetMember.user_id == current_user.id
-        ).first()
-        if member:
+        ).with_for_update().first()
+        if member and member.role != 'revoked':
             db.delete(member)
     db.commit()
     return None
@@ -908,6 +919,7 @@ def add_health_record(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    enforce_attachment_quota(db, pet.id, record_data.file_data)
 
     new_record = models.HealthRecord(
         pet_id=pet.id,
@@ -1154,7 +1166,7 @@ def add_feeding_log(
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
     for model, record_id in ((models.MealPlan, log_data.meal_plan_id), (models.Reminder, log_data.reminder_id)):
         if record_id is not None:
-            record = db.get(model, record_id)
+            record = db.get(model, record_id, with_for_update=True)
             if not record or record.pet_id != pet.id:
                 raise HTTPException(404, 'Связанная запись не найдена у этого питомца')
     new_log = models.FeedingLog(
@@ -1407,6 +1419,7 @@ def add_document(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    enforce_attachment_quota(db, pet.id, doc_data.file_data)
     new_doc = models.Document(
         pet_id=pet.id,
         title=doc_data.title,
@@ -1431,23 +1444,31 @@ def get_documents(
     return pet.documents
 
 
-@app.get('/api/v1/documents/{doc_id}/download', tags=['Документы и ИИ-распознавание'])
-def download_document(doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    from uploads import validate_attachment
-    from fastapi.responses import Response
-    from urllib.parse import quote
-    import base64
-    doc = db.get(models.Document, doc_id)
-    if not doc: raise HTTPException(404, 'Документ не найден')
-    get_user_pet_or_404(doc.pet_id, current_user.id, db)
-    if not doc.file_data: raise HTTPException(404, 'У документа нет вложения')
-    try: value, filename = validate_attachment(doc.file_data, doc.file_name)
-    except ValueError: raise HTTPException(415, 'Вложение не прошло проверку безопасности') from None
+def attachment_download(record, db, user):
+    if record is None:
+        raise HTTPException(404, 'Запись не найдена')
+    get_user_pet_or_404(record.pet_id, user.id, db)
+    if not record.file_data:
+        raise HTTPException(404, 'У записи нет вложения')
+    try:
+        value, filename = validate_attachment(record.file_data, record.file_name)
+    except ValueError:
+        raise HTTPException(415, 'Вложение не прошло проверку безопасности') from None
     data = base64.b64decode(value.split(',', 1)[1])
     return Response(data, media_type='application/octet-stream', headers={
         'Content-Disposition': "attachment; filename=attachment; filename*=UTF-8''" + quote(filename, safe=''),
         'Content-Security-Policy': "sandbox; default-src 'none'",
     })
+
+
+@app.get('/api/v1/documents/{doc_id}/download', tags=['Документы и ИИ-распознавание'])
+def download_document(doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return attachment_download(db.get(models.Document, doc_id), db, current_user)
+
+
+@app.get('/api/v1/health-records/{record_id}/download', tags=['Здоровье, вес и назначения'])
+def download_health_attachment(record_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return attachment_download(db.get(models.HealthRecord, record_id), db, current_user)
 
 
 @app.delete("/api/v1/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Документы и ИИ-распознавание"], summary="Удалить документ из архива")
@@ -1670,7 +1691,7 @@ def _compute_recommendation(pet: models.Pet, my_profile: Optional[models.MatchPr
     }
 
 
-def _profile_to_dict(mp: models.MatchProfile) -> dict:
+def _profile_to_dict(mp: models.MatchProfile, *, show_contact: bool = False) -> dict:
     return {
         "id": mp.id,
         "pet_id": mp.pet_id,
@@ -1686,7 +1707,7 @@ def _profile_to_dict(mp: models.MatchProfile) -> dict:
         "city": mp.city,
         "bio": mp.bio,
         "owner_name": mp.owner_name,
-        "owner_contact": mp.owner_contact,
+        "owner_contact": mp.owner_contact if show_contact else None,
         "photo": mp.photo,
         "photos": mp.photos if mp.photos is not None else ([mp.photo] if mp.photo else []),
         "is_published": mp.is_published,
@@ -1770,6 +1791,7 @@ def get_pet_match_data(
     _ensure_match_seed_data(db)
 
     my_profile = db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).first()
+    can_share_contacts = bool(my_profile and my_profile.is_published and pet.owner_id == current_user.id)
     my_decisions = db.query(models.MatchDecision).filter(models.MatchDecision.from_pet_id == pet_id).all()
     swiped_ids = {d.to_profile_id for d in my_decisions}
 
@@ -1788,7 +1810,7 @@ def get_pet_match_data(
         sender = db.query(models.MatchProfile).filter(
             models.MatchProfile.pet_id == inc.from_pet_id
         ).first()
-        if not sender or sender.pet_id == pet_id or sender.id in seen_sender_ids:
+        if not sender or not sender.is_published or sender.pet_id == pet_id or sender.id in seen_sender_ids:
             continue
         seen_sender_ids.add(sender.id)
         my_resp = next((d for d in my_decisions if d.to_profile_id == sender.id), None)
@@ -1796,7 +1818,7 @@ def get_pet_match_data(
             continue
         rec = _compute_recommendation(pet, my_profile, sender)
         incoming_likes.append({
-            **_profile_to_dict(sender),
+            **_profile_to_dict(sender, show_contact=bool(can_share_contacts and my_resp and my_resp.decision == "like")),
             **rec,
             "my_decision": my_resp.decision if my_resp else "pending",
             "is_mutual": bool(my_resp and my_resp.decision == "like")
@@ -1807,13 +1829,14 @@ def get_pet_match_data(
         if d.decision != "like":
             continue
         target = db.query(models.MatchProfile).filter(models.MatchProfile.id == d.to_profile_id).first()
-        if not target:
+        if not target or not target.is_published:
             continue
+        mutual = any(item["id"] == target.id for item in incoming_likes)
         rec = _compute_recommendation(pet, my_profile, target)
         my_likes.append({
-            **_profile_to_dict(target),
+            **_profile_to_dict(target, show_contact=mutual and can_share_contacts),
             **rec,
-            "is_mutual": any(i["id"] == target.id for i in incoming_likes)
+            "is_mutual": mutual
         })
 
     candidates = db.query(models.MatchProfile).filter(
@@ -1837,8 +1860,10 @@ def get_pet_match_data(
     same_species = [c for c in all_candidates if c["same_species"]]
     recommendations = same_species if same_species else all_candidates
 
+    owns_pet = pet.owner_id == current_user.id
+    visible_profile = my_profile if my_profile and (owns_pet or my_profile.is_published) else None
     return {
-        "my_profile": _profile_to_dict(my_profile) if my_profile else None,
+        "my_profile": _profile_to_dict(visible_profile, show_contact=owns_pet) if visible_profile else None,
         "recommendations": recommendations,
         "incoming_likes": incoming_likes,
         "my_likes": my_likes,
@@ -1855,6 +1880,8 @@ def save_pet_match_profile(
     current_user: models.User = Depends(get_current_user)
 ):
     pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    if pet.owner_id != current_user.id:
+        raise HTTPException(403, 'Только владелец управляет публикацией анкеты')
     existing = db.query(models.MatchProfile).filter(models.MatchProfile.pet_id == pet_id).first()
     if existing:
         existing.name = data.name
@@ -1873,7 +1900,8 @@ def save_pet_match_profile(
             existing.photo = data.photo
         elif not existing.photo:
             existing.photo = pet.photo_file_id
-        existing.is_published = data.is_published if data.is_published is not None else True
+        if "is_published" in data.model_fields_set and data.is_published is not None:
+            existing.is_published = data.is_published
     else:
         existing = models.MatchProfile(
             pet_id=pet_id,
@@ -1891,7 +1919,7 @@ def save_pet_match_profile(
             owner_name=data.owner_name or current_user.full_name,
             owner_contact=data.owner_contact,
             photo=data.photo or pet.photo_file_id,
-            is_published=True
+            is_published=data.is_published is not False
         )
         db.add(existing)
     if data.photos is not None:
@@ -1901,7 +1929,7 @@ def save_pet_match_profile(
         existing.photos = [data.photo]
     db.commit()
     db.refresh(existing)
-    return _profile_to_dict(existing)
+    return _profile_to_dict(existing, show_contact=True)
 
 
 @app.post("/api/v1/pets/{pet_id}/match-decision", tags=["Знакомства питомцев (Pet Match)"], summary="Поставить лайк или пропустить анкету кандидата")
@@ -1911,8 +1939,13 @@ def save_pet_match_decision(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    get_user_pet_or_404(pet_id, current_user.id, db, write=True)
-    target = db.query(models.MatchProfile).filter(models.MatchProfile.id == data.target_profile_id).first()
+    pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    if pet.owner_id != current_user.id:
+        raise HTTPException(403, 'Только владелец управляет знакомствами')
+    target = db.query(models.MatchProfile).filter(models.MatchProfile.id == data.target_profile_id,
+        models.MatchProfile.is_published.is_(True),
+        models.MatchProfile.pet_id != pet_id,
+    ).first()
     if not target:
         raise HTTPException(status_code=404, detail="Анкета не найдена")
 
@@ -1941,7 +1974,9 @@ def reset_pet_match_skips(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    pet = get_user_pet_or_404(pet_id, current_user.id, db, write=True)
+    if pet.owner_id != current_user.id:
+        raise HTTPException(403, 'Только владелец управляет знакомствами')
     db.query(models.MatchDecision).filter(
         models.MatchDecision.from_pet_id == pet_id,
         models.MatchDecision.decision == "skip"

@@ -318,3 +318,75 @@ def valid_image():
     from io import BytesIO
     from PIL import Image
     data=BytesIO();Image.new('RGB',(2,2)).save(data,format='PNG');return data.getvalue()
+
+
+def test_revocation_rotates_the_invitation_and_preserves_explicit_regrant(client):
+    owner, viewer = user(), user()
+    card = pet(client, owner[2])
+    path = f"/api/v1/pets/{card['id']}"
+    grant = {'email': viewer[1], 'role': 'viewer'}
+    assert client.post(path + '/members', headers=owner[2], json=grant).status_code == 200
+    member, = client.get(path + '/members', headers=owner[2]).json()
+    assert client.delete(path + f"/members/{member['id']}", headers=owner[2]).status_code == 200
+    with SessionLocal() as db:
+        assert db.get(models.PetMember, member['id']).role == 'revoked'
+        assert db.get(models.Pet, card['id']).share_code != card['share_code']
+    assert client.get(path + '/members', headers=owner[2]).json() == []
+    assert client.post(path + '/members', headers=owner[2], json=grant).status_code == 200
+    assert client.get(path, headers=viewer[2]).status_code == 200
+
+
+def test_match_contacts_require_mutual_consent_and_published_profiles(client):
+    first, second = user(), user()
+    a, b = (f"/api/v1/pets/{pet(client, account[2])['id']}" for account in (first, second))
+    profile = {'name': 'Лапа', 'species': 'Кошка', 'owner_contact': '@test-contact'}
+    first_profile = client.post(a + '/match-profile', headers=first[2], json=profile).json()
+    second_profile = client.post(b + '/match-profile', headers=second[2], json=profile).json()
+    assert first_profile['owner_contact'] == profile['owner_contact']
+    suggestions = client.get(a + '/match-data', headers=first[2]).json()['recommendations']
+    assert next(item for item in suggestions if item['id'] == second_profile['id'])['owner_contact'] is None
+    for path, account, candidate in ((a, first, second_profile), (b, second, first_profile)):
+        response = client.post(path + '/match-decision', headers=account[2],
+                               json={'target_profile_id': candidate['id'], 'decision': 'like'})
+        assert response.status_code == 200, response.text
+    matches = client.get(a + '/match-data', headers=first[2]).json()['my_likes']
+    assert next(item for item in matches if item['id'] == second_profile['id'])['owner_contact'] == profile['owner_contact']
+    assert client.put(b + '/match-profile', headers=second[2], json={**profile, 'is_published': False}).status_code == 200
+    listings = client.get(a + '/match-data', headers=first[2]).json()
+    assert all(item['id'] != second_profile['id'] for key in ('incoming_likes', 'my_likes', 'recommendations')
+               for item in listings[key])
+
+
+def test_browser_session_requires_csrf_header_and_clears_on_logout(client):
+    _, email, _ = user()
+    browser = {auth.BROWSER_HEADER: '1'}
+    login = client.post('/api/v1/auth/login', headers=browser, json={'email': email, 'password': 'test-password'})
+    assert login.status_code == 200 and 'access_token' not in login.json()
+    cookie = next(value for value in login.headers.get_list('set-cookie') if value.startswith(auth.SESSION_COOKIE + '='))
+    assert 'HttpOnly' in cookie and 'SameSite=strict' in cookie and 'Max-Age=28800' in cookie
+    assert client.get('/api/v1/auth/me').json()['email'] == email
+    assert client.post('/api/v1/auth/logout').status_code == 403
+    assert client.post('/api/v1/auth/logout', headers=browser).status_code == 200
+    assert client.cookies.get(auth.SESSION_COOKIE) is None
+    assert client.get('/api/v1/auth/me').status_code == 401
+
+
+def test_archive_lists_metadata_and_shares_quota_with_health_attachments(client, monkeypatch):
+    import uploads
+
+    monkeypatch.setattr(uploads, 'MAX_ARCHIVE_ATTACHMENTS', 1)
+    account = user()
+    path = f"/api/v1/pets/{pet(client, account[2])['id']}"
+    file_data = 'data:text/plain;base64,aGk='
+    record = client.post(path + '/health-records', headers=account[2], json={
+        'event_date': '2026-11-21', 'record_type': 'other',
+        'title': 'Note', 'file_name': 'note.txt', 'file_data': file_data,
+    })
+    assert record.status_code == 201, record.text
+    record_id = record.json()['id']
+    meta, = client.get(path, headers=account[2]).json()['health_records']
+    assert meta['has_attachment'] and 'file_data' not in meta
+    assert client.get(f'/api/v1/health-records/{record_id}/download', headers=account[2]).content == b'hi'
+    assert client.post(path + '/documents', headers=account[2], json={
+        'title': 'Document', 'date': '2026-11-21', 'file_data': file_data,
+    }).status_code == 413

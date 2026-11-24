@@ -616,6 +616,8 @@ const messages: Readonly<Record<string, string>> = {
   "Оплата через ЮKassa пока недоступна.": "YooKassa payments are currently unavailable.",
   "Опубликовал(а) анкету питомца": "Published pet profile",
   "Опубликовать анкету": "Publish the profile",
+  "Сохранить анкету": "Save profile",
+  " Показывать анкету другим владельцам": " Show this profile to other owners",
   "Основной корм": "Basic feed",
   "Особенности": "Special considerations",
   "Особенности и фото": "Characteristics and photos",

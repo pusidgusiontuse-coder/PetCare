@@ -2,7 +2,7 @@ import { formatLocale, uiText } from '../../i18n';
 import { LanguagePicker } from '../../i18n/LanguagePicker';
 import { BrandName } from '../../components/Brand';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ApiError, createApiClient } from '../../lib/api';
+import { ApiError, createApiClient, hasBrowserSession } from '../../lib/api';
 import { appendSample, ServerMetrics, type Stats } from './ServerMetrics';
 import { maxPremiumPrice, periods, type Prices } from '../billing/periods';
 import './admin.css';
@@ -20,7 +20,7 @@ type User = {
 type UserRow = User & { pet_count: number; timezone: string; admin_login: string | null };
 type Session = { ip_address: string | null; device: string; created_at: string; expires_at: string; active: boolean };
 type Contact = { support_contact: string };
-type Login = { access_token: string; user: User };
+type Login = { user: User };
 type History = { sessions: Session[]; total: number };
 type Audit = { actor_id: number; target_id: number; action: string; at: string };
 type Block = { ip_address: string; blocked_at: string; failures: number };
@@ -36,7 +36,11 @@ const write = (method: string, data: unknown): RequestInit => ({ method, body: J
 const errorText = (error: unknown) => error instanceof Error ? error.message : uiText("Не удалось связаться с сервером");
 
 function initialToken() {
-  try { return sessionStorage.getItem(ADMIN_SESSION) || ''; } catch { return ''; }
+  try {
+    sessionStorage.removeItem(ADMIN_SESSION);
+    localStorage.removeItem(STANDARD_SESSION);
+  } catch { /* unavailable storage */ }
+  return hasBrowserSession() ? 'browser-session' : '';
 }
 
 export function AdminApp() {
@@ -78,7 +82,7 @@ export function AdminApp() {
     setPrices(null);
     setAccountAction(null);
   }, []);
-  const api = useMemo(() => createApiClient({ getToken: () => token.current, onUnauthorized: forget, onMutationError: () => {} }), [forget]);
+  const api = useMemo(() => createApiClient({ browserSession: true, getToken: () => token.current, onUnauthorized: forget, onMutationError: () => {} }), [forget]);
 
   useEffect(() => {
     let active = true;
@@ -148,16 +152,12 @@ export function AdminApp() {
         const result = await api<Login>('/auth/login', write('POST', data));
         if (!result?.user.is_admin) {
           if (result) {
-            token.current = result.access_token;
+            token.current = 'browser-session';
             try { await api('/auth/logout', { method: 'POST' }); } finally { forget(); }
           }
           throw new Error(uiText("Для входа в панель нужна роль администратора."));
         }
-        token.current = result.access_token;
-        try {
-          sessionStorage.setItem(ADMIN_SESSION, token.current);
-          localStorage.removeItem(STANDARD_SESSION);
-        } catch { /* this tab can still use the in-memory session */ }
+        token.current = String(Date.now());
         setActor(result.user);
       } finally {
         form.reset();

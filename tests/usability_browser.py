@@ -1,5 +1,4 @@
 """Navigation, error-recovery and destructive-action usability checks on a demo DB."""
-import json
 import os
 from playwright.sync_api import sync_playwright, expect
 
@@ -7,10 +6,9 @@ BASE = os.environ.get('PETCARE_TEST_URL', 'http://127.0.0.1:8002')
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     context = browser.new_context(locale='ru-RU', viewport={'width':375,'height':812}, reduced_motion='reduce')
-    response = context.request.post(BASE+'/api/v1/auth/demo-login/1')
+    response = context.request.post(BASE+'/api/v1/auth/demo-login/1', headers={'X-PetCare-Browser': '1'})
     assert response.ok
     context.add_init_script("window.__PETCARE_TEST__=true;")
-    context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(response.json()['access_token'])+')')
     page=context.new_page(); errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
     page.goto(BASE); page.wait_for_load_state('networkidle');page.wait_for_function('() => state.pets.length > 0')

@@ -1,6 +1,5 @@
 """Time wheels: scroll, keyboard, manual input, presets, cancel and reopen."""
 import os
-import json
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 BASE=os.environ.get('PETCARE_TEST_URL','http://127.0.0.1:8002')
@@ -8,9 +7,8 @@ with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     for width,height in ((1440,900),(375,812),(812,375)):
         context=browser.new_context(locale='ru-RU', viewport={'width':width,'height':height},has_touch=True,is_mobile=width < 1024,reduced_motion='reduce')
-        result=context.request.post(BASE+'/api/v1/auth/demo-login/1');assert result.ok
+        result=context.request.post(BASE+'/api/v1/auth/demo-login/1', headers={'X-PetCare-Browser': '1'});assert result.ok
         context.add_init_script("window.__PETCARE_TEST__=true;")
-        context.add_init_script('localStorage.setItem("petcare_jwt",'+json.dumps(result.json()['access_token'])+')')
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(BASE);page.wait_for_load_state('networkidle');page.wait_for_function('() => state.pets.length > 0')
         page.evaluate('syncServerData(true)')  # Wait for a complete server snapshot.

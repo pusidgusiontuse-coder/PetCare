@@ -1,5 +1,9 @@
 """HTTP hardening without trusting forwarded headers from arbitrary clients."""
+import re
+
 from starlette.responses import JSONResponse
+
+FINGERPRINTED_ASSET = re.compile(r'^/static/frontend/assets/[^/]+-[0-9A-Za-z_-]{8}\.[0-9A-Za-z]+$')
 
 CSP = "; ".join([
     "default-src 'self'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'",
@@ -56,6 +60,9 @@ class SecurityMiddleware:
                 if path in ('/', '/admin') or path.startswith('/api/') or path == '/static/frontend/index.html':
                     response_headers = [(k, v) for k, v in response_headers if k.lower() != b'cache-control']
                     response_headers.append((b'cache-control', b'no-store'))
+                elif message['status'] in {200, 206, 304} and FINGERPRINTED_ASSET.fullmatch(path):
+                    response_headers = [(k, v) for k, v in response_headers if k.lower() != b'cache-control']
+                    response_headers.append((b'cache-control', b'public, max-age=31536000, immutable'))
                 if path in ('/admin', '/docs', '/redoc', '/openapi.json', '/static/frontend/index.html') or path.startswith('/api/'):
                     response_headers.append((b'x-robots-tag', b'noindex'))
                 if self.production: response_headers.append((b'strict-transport-security', b'max-age=31536000'))

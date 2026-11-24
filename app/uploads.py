@@ -112,3 +112,29 @@ def safe_stored_url(value, *, image=False):
     try: base64.b64decode(match[2].replace('\r', '').replace('\n', ''), validate=True)
     except (ValueError, binascii.Error): return None
     return value
+
+
+MAX_ARCHIVE_ATTACHMENTS = 100
+MAX_ARCHIVE_ENCODED_BYTES = 64 * 1024 * 1024
+
+
+def enforce_attachment_quota(db, pet_id, file_data):
+    """Serialize attachment additions for the same pet, including undo."""
+    if not file_data:
+        return
+    from sqlalchemy import func, select
+    from models import Document, HealthRecord, Pet
+
+    if db.get(Pet, pet_id, with_for_update=True) is None:
+        raise HTTPException(404, 'Питомец не найден')
+    remaining_count = MAX_ARCHIVE_ATTACHMENTS
+    remaining_bytes = MAX_ARCHIVE_ENCODED_BYTES - len(file_data.encode('utf-8'))
+    for record in (Document, HealthRecord):
+        # A locking read sees the last committed additions under MySQL REPEATABLE READ.
+        sizes = db.scalars(select(func.length(record.file_data))
+                           .where(record.pet_id == pet_id, record.file_data.is_not(None))
+                           .limit(MAX_ARCHIVE_ATTACHMENTS).with_for_update()).all()
+        remaining_count -= len(sizes)
+        remaining_bytes -= sum(sizes)
+        if remaining_count <= 0 or remaining_bytes < 0:
+            raise HTTPException(413, 'Архив вложений питомца заполнен. Освободите место и повторите.')

@@ -1,6 +1,7 @@
 import { language, uiText } from '../i18n';
 interface ApiClientOptions {
   getToken: () => string;
+  browserSession?: boolean;
   onUnauthorized: () => void;
   onMutationError: (error: Error) => void;
 }
@@ -40,7 +41,9 @@ export class ApiError extends Error {
   }
 }
 
-export function createApiClient({ getToken, onUnauthorized, onMutationError }: ApiClientOptions) {
+export const hasBrowserSession = () => document.cookie.split(';').some(cookie => cookie.trim() === 'petcare_signed_in=1');
+
+export function createApiClient({ getToken, browserSession = false, onUnauthorized, onMutationError }: ApiClientOptions) {
   return async function apiFetch<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T | null> {
     // All API traffic stays same-origin, including credentials from the session.
     if (!endpoint.startsWith('/') || endpoint.startsWith('//')) throw new Error(uiText("Неверный путь API"));
@@ -50,9 +53,10 @@ export function createApiClient({ getToken, onUnauthorized, onMutationError }: A
       headers.set('Content-Type', 'application/json');
     }
     const token = getToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (browserSession) headers.set('X-PetCare-Browser', '1');
+    else if (token) headers.set('Authorization', `Bearer ${token}`);
     try {
-      const response = await fetch('/api/v1' + endpoint, { ...options, headers });
+      const response = await fetch('/api/v1' + endpoint, { ...options, headers, credentials: 'same-origin' });
       if (response.status === 204) return null;
       const data: unknown = await response.json().catch(() => null);
       if (response.status === 401 && endpoint !== '/auth/login' && token === getToken()) onUnauthorized();

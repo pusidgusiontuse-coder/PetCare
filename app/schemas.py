@@ -1,5 +1,6 @@
 from datetime import date as date_type, datetime as datetime_type
-from typing import List, Optional
+from decimal import Decimal
+from typing import Annotated, List, Optional
 from pydantic import BaseModel, Field, model_validator, field_validator
 from uploads import validate_attachment, MAX_PHOTO_BYTES, safe_stored_url
 
@@ -78,18 +79,17 @@ class HealthRecordBase(BaseModel):
     comment: Optional[str] = None
     next_date: Optional[date_type] = None
     file_name: Optional[str] = None
-    file_data: Optional[str] = None
 
 class HealthRecordCreate(HealthRecordBase):
+    file_data: Optional[str] = None
+
     @model_validator(mode='after')
     def validate_file(self):
         self.file_data, self.file_name = validate_attachment(self.file_data, self.file_name)
         return self
 
 class HealthRecordOut(HealthRecordBase):
-    @field_validator('file_data')
-    @classmethod
-    def safe_file(cls, value): return safe_stored_url(value)
+    has_attachment: bool
 
     id: int
     pet_id: int
@@ -99,7 +99,7 @@ class HealthRecordOut(HealthRecordBase):
 
 class WeightCreate(BaseModel):
     date: date_type
-    kg: float
+    kg: float = Field(gt=0, allow_inf_nan=False)
 
 class WeightOut(WeightCreate):
     id: int
@@ -125,13 +125,21 @@ class PrescriptionOut(PrescriptionCreate):
 
 # ----------------- ПИТАНИЕ -----------------
 
-class MealPlanCreate(BaseModel):
+ClockTime = Annotated[str, Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
+
+
+class MealPlanBase(BaseModel):
     food: str
     time: str
     end_time: Optional[str] = None
     notes: Optional[str] = None
 
-class MealPlanOut(MealPlanCreate):
+class MealPlanCreate(MealPlanBase):
+    time: ClockTime
+    end_time: Optional[ClockTime] = None
+
+
+class MealPlanOut(MealPlanBase):
     id: int
     pet_id: int
     completed_on: Optional[str] = None
@@ -169,7 +177,14 @@ class NutritionLogBase(BaseModel):
     date: Optional[date_type] = None
 
 class NutritionLogCreate(NutritionLogBase):
-    pass
+    price: Optional[float] = Field(default=None, ge=0, lt=1_000_000_000_000, allow_inf_nan=False)
+
+    @field_validator("price")
+    @classmethod
+    def validate_price_precision(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and Decimal(str(value)).normalize().as_tuple().exponent < -2:
+            raise ValueError("Цена должна содержать не более двух знаков после запятой")
+        return value
 
 class NutritionLogOut(NutritionLogBase):
     id: int
@@ -186,18 +201,17 @@ class DocumentBase(BaseModel):
     doc_type: str = "other"
     date: date_type
     file_name: Optional[str] = None
-    file_data: Optional[str] = None
 
 class DocumentCreate(DocumentBase):
+    file_data: Optional[str] = None
+
     @model_validator(mode='after')
     def validate_file(self):
         self.file_data, self.file_name = validate_attachment(self.file_data, self.file_name)
         return self
 
 class DocumentOut(DocumentBase):
-    @field_validator('file_data')
-    @classmethod
-    def safe_file(cls, value): return safe_stored_url(value)
+    has_attachment: bool
 
     id: int
     pet_id: int

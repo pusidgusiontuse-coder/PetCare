@@ -10,7 +10,8 @@ const priceFormat = new Intl.NumberFormat(formatLocale);
 type Payment = { status: 'pending' | 'succeeded' | 'canceled'; url?: string };
 type Plans = { enabled: boolean; test: boolean; prices: Prices };
 const api = createApiClient({
-  getToken: () => localStorage.getItem('petcare_jwt') ?? '',
+  browserSession: true,
+  getToken: () => '',
   onUnauthorized: () => {},
   onMutationError: () => {},
 });

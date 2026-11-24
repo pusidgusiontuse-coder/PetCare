@@ -1,5 +1,5 @@
 import { formatLocale, uiText, htmlUiText } from '../i18n';
-import { ApiError, createApiClient } from '../lib/api';
+import { ApiError, createApiClient, hasBrowserSession } from '../lib/api';
 import { setAppearanceAccount } from '../features/appearance/store';
 import { bindFilePicker, filePickerMarkup, readUpload, uploadError } from '../lib/filePicker';
 import { publishNutrition, resetNutritionFilters } from '../features/nutrition/store';
@@ -17,17 +17,10 @@ document.getElementById('match').hidden = !FRIENDS_ENABLED;
 
 const STORAGE_AUTH_KEY = 'petcare_jwt';
 const STORAGE_PUSH_KEY = 'petcare_push_settings';
-let authToken = '';
+let authToken = hasBrowserSession() ? 'browser-session' : '';
 
-function enterAdmin(token) {
-  try {
-    sessionStorage.setItem('petcare_admin_session', token);
-  } catch {
-    throw new Error(uiText("Разрешите браузеру хранить данные сеанса для входа в панель администратора."));
-  }
-  authToken = '';
+function enterAdmin() {
   setAppearanceAccount(null);
-  try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
   location.replace('/admin');
 }
 
@@ -36,7 +29,7 @@ function cleanLegacyStorage() {
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k !== STORAGE_AUTH_KEY && k !== STORAGE_PUSH_KEY && (k.startsWith('petcare_') || k.startsWith('petcare-'))) {
+      if (k && k !== STORAGE_PUSH_KEY && (k.startsWith('petcare_') || k.startsWith('petcare-'))) {
         keysToRemove.push(k);
       }
     }
@@ -44,14 +37,10 @@ function cleanLegacyStorage() {
   } catch (e) {}
 }
 cleanLegacyStorage();
-
-try {
-  authToken = localStorage.getItem(STORAGE_AUTH_KEY) || '';
-} catch (e) {
-  authToken = '';
-}
+try { sessionStorage.removeItem('petcare_admin_session'); } catch {}
 
 const requestApi = createApiClient({
+  browserSession: true,
   getToken: () => authToken,
   onUnauthorized: () => {
     clearSession();
@@ -137,6 +126,7 @@ let state = {
 
 function clearSession() {
   authToken = '';
+  document.cookie = 'petcare_signed_in=; Max-Age=0; Path=/; SameSite=Strict';
   setAppearanceAccount(null);
   try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
   state.user = guestUser();
@@ -263,6 +253,20 @@ function syncServerData(silent = false) {
 
 window.addEventListener('petcare-premium-updated', () => { if (authToken) void syncServerData(true); });
 
+async function loadPetDetails(pets, sessionKey) {
+  const details = [];
+  const batchSize = 4;
+  for (let offset = 0; offset < pets.length && sessionKey === authToken; offset += batchSize) {
+    const batch = pets.slice(offset, offset + batchSize);
+    const results = await Promise.allSettled(batch.map(pet => apiFetch('/pets/' + pet.serverId)));
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value) details.push([batch[index], result.value]);
+      else if (result.status === 'rejected') console.warn('Detail load err:', result.reason);
+    });
+  }
+  return details;
+}
+
 async function loadServerData() {
   try {
     if (!authToken) {
@@ -274,7 +278,7 @@ async function loadServerData() {
     const u = await apiFetch('/auth/session');
     if (sessionToken !== authToken) return;
     sessionLoadFailed = false;
-    if (u?.is_admin) { enterAdmin(authToken); return; }
+    if (u?.is_admin) { enterAdmin(); return; }
     if (u) {
       setAppearanceAccount(u, theme => apiFetch('/auth/profile', {
         method: 'PATCH', body: JSON.stringify({ theme }),
@@ -290,11 +294,10 @@ async function loadServerData() {
       };
     }
 
-    const remoteSettings = await apiFetch('/notifications/settings');
-    state.settings = { ...state.settings, ...remoteSettings };
-
-    // 2. Load pets
+    const settingsRequest = apiFetch('/notifications/settings').catch(() => null);
+    const remindersRequest = apiFetch('/reminders').catch(() => null);
     const remotePets = await apiFetch('/pets');
+    if (sessionToken !== authToken) return;
     if (Array.isArray(remotePets)) {
       const prevSelected = state.selected;
       state.pets = remotePets.map(p => ({
@@ -331,170 +334,162 @@ async function loadServerData() {
       state.shopping = [];
       state.activity = [];
 
-      // 3. Load full details for each pet
-      for (const p of state.pets) {
-        try {
-          const detail = await apiFetch('/pets/' + p.serverId);
-          if (!detail) continue;
+      const details = await loadPetDetails(state.pets, sessionToken);
+      if (sessionToken !== authToken) return;
+      for (const [p, detail] of details) {
+        state.contacts[p.id] = { clinicUrl: detail.clinic_url || '', doctor: detail.doctor_name || '' };
+        state.avatar[p.id] = { background: detail.avatar_bg || 'lavender', accessory: detail.avatar_accessory || 'none' };
+        if (Array.isArray(detail.co_owners)) p.coOwners = detail.co_owners;
 
-          state.contacts[p.id] = { clinicUrl: detail.clinic_url || '', doctor: detail.doctor_name || '' };
-          state.avatar[p.id] = { background: detail.avatar_bg || 'lavender', accessory: detail.avatar_accessory || 'none' };
-          if (Array.isArray(detail.co_owners)) p.coOwners = detail.co_owners;
-
-          if (Array.isArray(detail.health_records)) {
-            detail.health_records.forEach(r => {
-              const normType = ({ parasite_treatment: 'parasite', vet_visit: 'vet' })[r.record_type] || r.record_type || 'other';
-              state.health.push({
-                id: 'sh_' + r.id,
-                serverId: r.id,
-                petId: p.id,
-                type: normType,
-                title: r.title,
-                date: r.event_date,
-                notes: r.comment || r.vet_conclusion || '',
-                product: r.medicine_name || '',
-                clinic: r.clinic || '',
-                doctor: r.doctor || '',
-                result: r.result || '',
-                nextDate: r.next_date || '',
-                attachment: r.file_data ? { name: r.file_name || uiText("Файл"), data: r.file_data } : null
-              });
+        if (Array.isArray(detail.health_records)) {
+          detail.health_records.forEach(r => {
+            const normType = ({ parasite_treatment: 'parasite', vet_visit: 'vet' })[r.record_type] || r.record_type || 'other';
+            state.health.push({
+              id: 'sh_' + r.id,
+              serverId: r.id,
+              petId: p.id,
+              type: normType,
+              title: r.title,
+              date: r.event_date,
+              notes: r.comment || r.vet_conclusion || '',
+              product: r.medicine_name || '',
+              clinic: r.clinic || '',
+              doctor: r.doctor || '',
+              result: r.result || '',
+              nextDate: r.next_date || '',
+              attachment: r.has_attachment ? { name: r.file_name || uiText("Файл"), data: `/api/v1/health-records/${r.id}/download` } : null
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.nutrition_logs)) {
-            detail.nutrition_logs.forEach(n => {
-              state.nutrition.push({
-                id: 'sn_' + n.id,
-                serverId: n.id,
-                petId: p.id,
-                food: n.food_name,
-                brand: n.brand || '',
-                kind: n.kind || 'food',
-                date: n.date || today(),
-                liked: n.liked || 'unknown',
-                tolerated: n.tolerated || 'unknown',
-                reactions: n.adverse_reactions ? n.adverse_reactions.split(',').map(s => s.trim()).filter(Boolean) : [],
-                price: n.price || null,
-                notes: n.notes || ''
-              });
+        if (Array.isArray(detail.nutrition_logs)) {
+          detail.nutrition_logs.forEach(n => {
+            state.nutrition.push({
+              id: 'sn_' + n.id,
+              serverId: n.id,
+              petId: p.id,
+              food: n.food_name,
+              brand: n.brand || '',
+              kind: n.kind || 'food',
+              date: n.date || today(),
+              liked: n.liked || 'unknown',
+              tolerated: n.tolerated || 'unknown',
+              reactions: n.adverse_reactions ? n.adverse_reactions.split(',').map(s => s.trim()).filter(Boolean) : [],
+              price: n.price || null,
+              notes: n.notes || ''
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.meal_plans)) {
-            detail.meal_plans.forEach(m => {
-              state.mealPlans.push({
-                id: 'smp_' + m.id,
-                serverId: m.id,
-                petId: p.id,
-                food: m.food,
-                time: m.time,
-                endTime: m.end_time || '',
-                notes: m.notes || '',
-                completedOn: m.completed_on || null
-              });
+        if (Array.isArray(detail.meal_plans)) {
+          detail.meal_plans.forEach(m => {
+            state.mealPlans.push({
+              id: 'smp_' + m.id,
+              serverId: m.id,
+              petId: p.id,
+              food: m.food,
+              time: m.time,
+              endTime: m.end_time || '',
+              notes: m.notes || '',
+              completedOn: m.completed_on || null
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.feeding_logs)) {
-            detail.feeding_logs.forEach(f => {
-              state.feedingLogs.push({
-                id: 'sfl_' + f.id,
-                serverId: f.id,
-                petId: p.id,
-                food: f.food,
-                amount: f.amount || '',
-                at: f.at,
-                actor: f.actor || 'Владелец',
-                notes: f.notes || '',
-                mealPlanId: f.meal_plan_id ? 'smp_' + f.meal_plan_id : null,
-                reminderId: f.reminder_id ? 'sr_' + f.reminder_id : null,
-                completionDay: f.completion_day || null
-              });
+        if (Array.isArray(detail.feeding_logs)) {
+          detail.feeding_logs.forEach(f => {
+            state.feedingLogs.push({
+              id: 'sfl_' + f.id,
+              serverId: f.id,
+              petId: p.id,
+              food: f.food,
+              amount: f.amount || '',
+              at: f.at,
+              actor: f.actor || 'Владелец',
+              notes: f.notes || '',
+              mealPlanId: f.meal_plan_id ? 'smp_' + f.meal_plan_id : null,
+              reminderId: f.reminder_id ? 'sr_' + f.reminder_id : null,
+              completionDay: f.completion_day || null
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.weights)) {
-            detail.weights.forEach(w => {
-              state.weights.push({
-                id: 'sw_' + w.id,
-                serverId: w.id,
-                petId: p.id,
-                date: w.date,
-                kg: Number(w.kg)
-              });
+        if (Array.isArray(detail.weights)) {
+          detail.weights.forEach(w => {
+            state.weights.push({
+              id: 'sw_' + w.id,
+              serverId: w.id,
+              petId: p.id,
+              date: w.date,
+              kg: Number(w.kg)
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.prescriptions)) {
-            detail.prescriptions.forEach(pr => {
-              state.prescriptions.push({
-                id: 'spr_' + pr.id,
-                serverId: pr.id,
-                petId: p.id,
-                name: pr.name,
-                dose: pr.dose || '',
-                startDate: pr.start_date,
-                duration: pr.duration || '',
-                times: pr.times || '',
-                status: pr.status || 'Активно'
-              });
+        if (Array.isArray(detail.prescriptions)) {
+          detail.prescriptions.forEach(pr => {
+            state.prescriptions.push({
+              id: 'spr_' + pr.id,
+              serverId: pr.id,
+              petId: p.id,
+              name: pr.name,
+              dose: pr.dose || '',
+              startDate: pr.start_date,
+              duration: pr.duration || '',
+              times: pr.times || '',
+              status: pr.status || 'Активно'
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.documents)) {
-            detail.documents.forEach(d => {
-              state.documents.push({
-                id: 'sdoc_' + d.id,
-                serverId: d.id,
-                petId: p.id,
-                title: d.title,
-                type: d.doc_type || 'other',
-                date: d.date,
-                file: { name: d.file_name || d.title, data: d.file_data || '#' }
-              });
+        if (Array.isArray(detail.documents)) {
+          detail.documents.forEach(d => {
+            state.documents.push({
+              id: 'sdoc_' + d.id,
+              serverId: d.id,
+              petId: p.id,
+              title: d.title,
+              type: d.doc_type || 'other',
+              date: d.date,
+              file: { name: d.file_name || d.title, data: d.has_attachment ? `/api/v1/documents/${d.id}/download` : '#' }
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.shopping_items)) {
-            detail.shopping_items.forEach(s => {
-              state.shopping.push({
-                id: 'sshop_' + s.id,
-                serverId: s.id,
-                petId: p.id,
-                title: s.title,
-                quantity: s.quantity || '',
-                done: Boolean(s.is_done),
-                by: s.bought_by || null
-              });
+        if (Array.isArray(detail.shopping_items)) {
+          detail.shopping_items.forEach(s => {
+            state.shopping.push({
+              id: 'sshop_' + s.id,
+              serverId: s.id,
+              petId: p.id,
+              title: s.title,
+              quantity: s.quantity || '',
+              done: Boolean(s.is_done),
+              by: s.bought_by || null
             });
-          }
+          });
+        }
 
-          if (Array.isArray(detail.activities)) {
-            detail.activities.forEach(a => {
-              state.activity.push({
-                id: 'sact_' + a.id,
-                serverId: a.id,
-                petId: p.id,
-                actor: a.actor || 'Владелец',
-                action: a.action,
-                icon: a.icon || '🐾',
-                at: a.at
-              });
+        if (Array.isArray(detail.activities)) {
+          detail.activities.forEach(a => {
+            state.activity.push({
+              id: 'sact_' + a.id,
+              serverId: a.id,
+              petId: p.id,
+              actor: a.actor || 'Владелец',
+              action: a.action,
+              icon: a.icon || '🐾',
+              at: a.at
             });
-          }
-        } catch (e) {
-          console.warn('Detail load err:', e);
+          });
         }
       }
 
-      // 4. Load all reminders
-      const rems = await apiFetch('/reminders').catch(() => []);
-      if (Array.isArray(rems)) {
-        state.events = rems.map(normalizeReminder);
-      }
-      // 5. Load match data for active pet
-      await loadMatchDataForActivePet(true);
+      const [remoteSettings, rems] = await Promise.all([settingsRequest, remindersRequest]);
+      if (sessionToken !== authToken) return;
+      if (remoteSettings) state.settings = { ...state.settings, ...remoteSettings };
+      if (Array.isArray(rems)) state.events = rems.map(normalizeReminder);
+      if (page === 'match') void loadMatchDataForActivePet();
     }
   } catch (err) {
     console.warn('syncServerData notice:', err.message);
@@ -660,7 +655,7 @@ function setPetContext(id) {
   resetNutritionFilters();
   if (changed) {
     matchInspectProfileId = null;
-    loadMatchDataForActivePet();
+    if (page === 'match') loadMatchDataForActivePet();
   }
   return true;
 }
@@ -814,7 +809,7 @@ function render() {
   renderNutrition();
   renderCare();
   renderDocuments();
-  renderMatch();
+  if (page === 'match') renderMatch();
   renderProfile();
   renderPetHighlights();
 }
@@ -1327,9 +1322,10 @@ async function loadMatchDataForActivePet(silent = false) {
   if (!FRIENDS_ENABLED) return;
   const p = pet();
   if (!p || !p.serverId) return;
+  const sessionKey = authToken;
   try {
     const data = await apiFetch('/pets/' + p.serverId + '/match-data');
-    if (data) {
+    if (data && sessionKey === authToken) {
       matchDataByPet[p.id] = {
         loaded: true,
         myProfile: data.my_profile || null,
@@ -1338,6 +1334,7 @@ async function loadMatchDataForActivePet(silent = false) {
         myLikes: Array.isArray(data.my_likes) ? data.my_likes : [],
         swipedCount: Number(data.swiped_count) || 0
       };
+      if (pet()?.id !== p.id) return;
       // При первом заходе от питомца без анкеты сразу открываем заполнение анкеты
       if (!data.my_profile && !matchPromptedForPet[p.id]) {
         matchTab = 'profile';
@@ -1351,6 +1348,7 @@ async function loadMatchDataForActivePet(silent = false) {
       else updateMatchNavBadge();
     }
   } catch (err) {
+    if (sessionKey === authToken && !matchDataByPet[p.id]?.loaded) delete matchDataByPet[p.id];
     console.warn('loadMatchDataForActivePet notice:', err.message);
   }
 }
@@ -1405,6 +1403,7 @@ function populateMatchFormFromPet(forceFromPetCard = false) {
   form.elements.namedItem('city').value = existing?.city || '';
   form.elements.namedItem('owner_name').value = existing?.owner_name || state.user.name || '';
   form.elements.namedItem('owner_contact').value = existing?.owner_contact || '';
+  form.elements.namedItem('is_published').checked = existing?.is_published === true;
   form.elements.namedItem('bio').value = existing?.bio || p.notes || '';
   window.dispatchEvent(new CustomEvent('petcare:profile-photos', {detail: existing?.photos ?? [existing?.photo || p.photo].filter(Boolean)}));
   form.dataset.petId = String(p.id);
@@ -1447,13 +1446,13 @@ function renderTinderCardHTML(candidate, mode = 'discover') {
         ("<div class=\"match-fact-item\">"+"<dt>"+htmlUiText("Хозяин")+"</dt>"+"<dd>") + esc(candidate.owner_name || 'Владелец') + '</dd></div>' +
       '</dl>' +
       (candidate.bio ? '<p class="match-tinder-bio">' + esc(candidate.bio) + '</p>' : '') +
-      '<div class="match-contact-box">' +
+      (candidate.owner_contact ? '<div class="match-contact-box">' +
         '<div>' +
           ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(candidate.owner_name || 'Владелец') + '):</strong>' +
           '<span>' + esc(candidate.owner_contact || uiText("Не указаны")) + '</span>' +
         '</div>' +
         '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(candidate.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
-      '</div>' +
+      '</div>' : '') +
       '<div class="match-swipe-actions">' +
         '<button type="button" class="btn-swipe-skip" data-swipe-action="skip" data-profile-id="' + esc(candidate.id) + ("\">"+htmlUiText("✕ Пропустить")+"</button>") +
         '<button type="button" class="btn-swipe-like" data-swipe-action="like" data-profile-id="' + esc(candidate.id) + '">' + (candidate.liked_me || mode === 'incoming' ? ("♥ "+uiText("Ответить взаимностью")) : ("♥ "+uiText("Нравится"))) + '</button>' +
@@ -1603,13 +1602,13 @@ function renderMatch() {
             '</div>' +
             ("<div class=\"small\">"+"<b>"+htmlUiText("Прививки:")+"</b>"+" ") + esc(item.vaccinated || 'Не указано') + ("<br>"+"<b>"+htmlUiText("Цель:")+"</b>"+" ") + esc(item.purpose || uiText("Прогулки и игры")) + '</div>' +
             (item.bio ? '<p class="small" style="margin:0;color:var(--ink)">' + esc(item.bio) + '</p>' : '') +
-            '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
+            (item.owner_contact ? '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
               '<div>' +
                 ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(item.owner_name || 'Владелец') + '):</strong>' +
                 '<span>' + esc(item.owner_contact || uiText("Не указаны")) + '</span>' +
               '</div>' +
               '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
-            '</div>' +
+            '</div>' : '') +
             '<div class="match-mini-actions">' +
               '<button type="button" class="btn tiny" data-inspect-incoming="' + esc(item.id) + ("\">"+htmlUiText("Открыть анкету")+"</button>") +
               (!item.is_mutual ? '<button type="button" class="btn tiny primary" data-swipe-action="like" data-profile-id="' + esc(item.id) + ("\">"+"♥ "+htmlUiText("Ответить лайком")+"</button>") : '') +
@@ -1647,13 +1646,13 @@ function renderMatch() {
               '<p class="small" style="margin:2px 0 0">' + esc(item.species) + ' · <b>' + esc(uiText(item.breed || 'Метис')) + '</b>' + (item.city ? ' · ' + esc(item.city) : '') + '</p>' +
             '</div>' +
             ("<div class=\"small\">"+"<b>"+htmlUiText("Прививки:")+"</b>"+" ") + esc(item.vaccinated || 'Не указано') + (" · "+"<b>"+htmlUiText("Цель:")+"</b>"+" ") + esc(item.purpose || uiText("Прогулки и игры")) + '</div>' +
-            '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
+            (item.owner_contact ? '<div class="match-contact-box" style="margin-bottom:0;padding:12px 14px">' +
               '<div>' +
                 ("<strong>"+htmlUiText("Контакты хозяина")+" (") + esc(item.owner_name || 'Владелец') + '):</strong>' +
                 '<span>' + esc(item.owner_contact || uiText("Не указаны")) + '</span>' +
               '</div>' +
               '<button type="button" class="btn tiny primary" data-copy-contact="' + esc(item.owner_contact) + ("\">"+htmlUiText("Скопировать")+"</button>") +
-            '</div>' +
+            '</div>' : '') +
           '</div>' +
         '</article>';
       }).join('')
@@ -1698,11 +1697,11 @@ if ($('match-profile-form')) {
           owner_contact: String(raw.owner_contact || '').trim(),
           bio: String(raw.bio || '').trim(),
           ...(raw.photos_changed === 'true' ? {photos: JSON.parse(raw.photos || '[]')} : {}),
-          is_published: true
+          is_published: raw.is_published === 'on'
         })
       });
       form.dataset.dirty = 'false';
-      logActivity(p.id, (uiText("Опубликовал(а) анкету питомца")+" ") + p.name, '🐾');
+      if (raw.is_published === 'on') logActivity(p.id, (uiText("Опубликовал(а) анкету питомца")+" ") + p.name, '🐾');
       await loadMatchDataForActivePet(false);
       setMatchTab('discover');
     } catch (err) {
@@ -2621,14 +2620,10 @@ $('auth-form').onsubmit = async e => {
     const payload = authMode === 'login' ? { email, password } : { email, password, full_name: fullName, timezone: 'Europe/Moscow' };
     const res = await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
     if (res?.verification_required) { $('auth-dialog').close(); openSecurity('register', res.challenge_id); return; }
-    if (res?.access_token) {
-      if (res.user?.is_admin) { enterAdmin(res.access_token); return; }
-      authToken = res.access_token;
-      try { sessionStorage.removeItem('petcare_admin_session'); } catch {}
-      try {
-        localStorage.setItem(STORAGE_AUTH_KEY, authToken);
-        localStorage.removeItem('petcare-logged-out');
-      } catch {}
+    if (res?.user) {
+      if (res.user?.is_admin) { enterAdmin(); return; }
+      authToken = uid();
+      try { localStorage.removeItem('petcare-logged-out'); } catch {}
       if (res.user) {
         state.user = { id: res.user.id, name: res.user.full_name || fullName, email: res.user.email, timezone: res.user.timezone || 'Europe/Moscow' };
       }
@@ -3566,7 +3561,7 @@ const feedback=(text)=>{
  if(!message){message=document.createElement('p');message.className='settings-feedback';message.setAttribute('role','status');body.append(message);}
  message.textContent=text;message.scrollIntoView({block:'nearest'});
 };
-function acceptSession(result){authToken=result.access_token; localStorage.setItem(STORAGE_AUTH_KEY,authToken); localStorage.removeItem('petcare-logged-out'); state.user={id:result.user.id,name:result.user.full_name,email:result.user.email,timezone:result.user.timezone};}
+function acceptSession(result){authToken=uid(); try { localStorage.removeItem('petcare-logged-out'); } catch {} state.user={id:result.user.id,name:result.user.full_name,email:result.user.email,timezone:result.user.timezone};}
 function openSecurity(purpose,challenge=''){
  securityPurpose=purpose;securityChallenge=challenge; securityResendAt=Date.now()+60000;
  $('security-form').reset(); $('security-error').textContent='';
@@ -3613,7 +3608,7 @@ $('security-form').onsubmit = async event => {
       location.reload();
       return;
     }
-    if (result.user?.is_admin) { enterAdmin(result.access_token); return; }
+    if (result.user?.is_admin) { enterAdmin(); return; }
     acceptSession(result);
     securityDialog.close();
     await syncServerData();
@@ -3630,7 +3625,7 @@ $('security-close').onclick=()=>securityDialog.close();
 document.querySelectorAll('[data-security]').forEach(b=>b.onclick=()=>openSecurity(b.dataset.security));
 const forgot=document.createElement('button');forgot.type='button';forgot.className='btn ghost';forgot.textContent=uiText("Забыли пароль?");forgot.onclick=()=>{$('auth-dialog').close();openSecurity('password_reset');};$('auth-form').append(forgot);
 $('sessions-open').onclick=async()=>{try{const list=await apiFetch('/auth/sessions');$('session-list').innerHTML=("<h3>"+htmlUiText("Активные входы")+"</h3>")+list.map(s=>`${"<div class=\"record\">"}${esc(s.device)}${" "}${s.current?(" · "+uiText("это устройство")):''}${"<br>"}${esc(s.created_at)}${" "+"<button type=\"button\" class=\"btn tiny\" data-revoke=\""}${esc(s.id)}${"\">"+htmlUiText("Завершить")+"</button>"+"</div>"}`).join('');document.querySelectorAll('[data-revoke]').forEach(b=>b.onclick=async()=>{try{await apiFetch('/auth/sessions/'+b.dataset.revoke,{method:'DELETE'});await $('sessions-open').onclick();}catch(e){feedback(e.message);}});}catch(e){feedback(e.message);}};
-$('logout-everywhere').onclick=async()=>{try{await apiFetch('/auth/logout-all',{method:'POST'});authToken='';localStorage.removeItem(STORAGE_AUTH_KEY);location.reload();}catch(e){feedback(e.message);}};
+$('logout-everywhere').onclick=async()=>{try{await apiFetch('/auth/logout-all',{method:'POST'});clearSession();location.reload();}catch(e){feedback(e.message);}};
 $('export-account').onclick=async()=>{try{const result=await apiFetch('/account/export');const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='petcare-export.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message);}};
 let installPrompt;
 const installedDisplay = matchMedia('(display-mode: standalone)');
@@ -3727,7 +3722,7 @@ async function refreshMembers(){
  const p=pet();$('server-members').innerHTML='';if(!p||p.ownerId!==state.user.id)return;
  const list=await apiFetch('/pets/'+p.serverId+'/members');
  $('server-members').innerHTML=("<h3>"+htmlUiText("Доступ к питомцу")+"</h3>")+list.map(m=>`${"<div class=\"record\">"}${esc(m.name)}${" · "}${esc(m.email)}${" · "}${m.role==='viewer'?'Просмотр':'Редактор'}${" · "}${esc(m.expires_at||uiText("Без срока"))}${" "+"<button type=\"button\" class=\"btn tiny\" data-remove-member=\""}${m.id}${"\">"+htmlUiText("Отозвать доступ")+"</button>"+"</div>"}`).join('')+("<button type=\"button\" class=\"btn\" id=\"rotate-invite\">"+htmlUiText("Перевыпустить код приглашения")+"</button>");
- document.querySelectorAll('[data-remove-member]').forEach(b=>b.onclick=async()=>{try{await apiFetch(`/pets/${p.serverId}/members/${b.dataset.removeMember}`,{method:'DELETE'});await refreshMembers();}catch(e){feedback(e.message);}});
+ document.querySelectorAll('[data-remove-member]').forEach(b=>b.onclick=async()=>{try{const result=await apiFetch(`/pets/${p.serverId}/members/${b.dataset.removeMember}`,{method:'DELETE'});p.shareCode=result.share_code;render();}catch(e){feedback(e.message);}});
  $('rotate-invite').onclick=async()=>{try{const r=await apiFetch('/pets/'+p.serverId+'/rotate-code',{method:'POST'});p.shareCode=r.share_code;render();await refreshMembers();feedback(uiText("Новый код готов. Старый код больше не работает; уже выданные права сохранены."));}catch(e){feedback(e.message);}};
 }
 const originalRenderProfile=renderProfile;

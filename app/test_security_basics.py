@@ -157,6 +157,16 @@ def test_security_headers_and_no_private_cache(client):
     assert "script-src 'self'" in r.headers['content-security-policy']
     assert "'unsafe-inline'" not in r.headers['content-security-policy'].split('script-src ')[1].split(';')[0]
     assert client.get('/api/v1/health').headers['cache-control']=='no-store'
+    from pathlib import Path
+
+    scripts = sorted((Path(main.__file__).parent / 'static/frontend/assets').glob('index-*.js'))
+    assert scripts
+    asset = client.get('/static/frontend/assets/' + scripts[0].name, headers={'Accept-Encoding': 'gzip'})
+    assert asset.status_code == 200
+    assert asset.headers['content-encoding'] == 'gzip'
+    assert 'accept-encoding' in asset.headers['vary'].lower()
+    assert asset.headers['cache-control'] == 'public, max-age=31536000, immutable'
+
 
 
 @pytest.mark.parametrize('url',[
@@ -221,7 +231,7 @@ def test_unsafe_legacy_file_urls_are_not_exposed(client):
     with SessionLocal() as db:
         db.add(models.Document(pet_id=p['id'],title='Старое вложение',date=date.today(),file_data='javascript:alert(1)'));db.commit()
     docs=client.get(f"/api/v1/pets/{p['id']}/documents",headers=owner[2]).json()
-    assert docs[0]['file_data'] is None
+    assert 'file_data' not in docs[0] and not docs[0]['has_attachment']
 
 
 def test_valid_pdf_without_active_content_accepted(client):
