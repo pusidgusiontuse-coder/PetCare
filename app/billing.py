@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import httpx
 from pydantic import BaseModel
 from sqlalchemy import select, update
@@ -210,6 +210,8 @@ def install_billing(app):
 
     @app.get('/premium', response_class=HTMLResponse, include_in_schema=False)
     def premium_page(lang: Literal['ru', 'en'] = 'ru', db=Depends(get_db)):
+        if lang == 'ru' and PUBLISHED_OFFER.is_file():
+            return FileResponse(PUBLISHED_OFFER, media_type='text/html; charset=utf-8')
         prices = premium_prices(db)
         details = seller()
         if lang == 'en':
@@ -217,7 +219,7 @@ def install_billing(app):
             return (
                 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" '
                 'content="width=device-width, initial-scale=1"><title>PetCare Premium</title>'
-                '<main><h1>PetCare Premium</h1><p>Upgrade your account to add more than three pets.</p>'
+                '<main><h1>PetCare Premium</h1><p>Upgrade your account to add more than one pet.</p>'
                 f'<h2>Pricing</h2><ul>{rows}</ul><p>Pay once for the selected period. Premium starts when payment '
                 'is confirmed. Your subscription does not renew automatically.</p>'
                 '<p><a href="/premium">Official Premium terms (Russian)</a></p>'
@@ -235,10 +237,16 @@ def install_billing(app):
             '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" '
             'content="width=device-width, initial-scale=1"><title>PetCare Premium</title>'
             '<main><h1>PetCare Premium</h1><p>Расширенный доступ для аккаунта PetCare. '
-            'Позволяет добавить больше трёх питомцев.</p><h2>Цены</h2>'
+            'Позволяет добавить больше одного питомца.</p><h2>Цены</h2>'
             f'<ul>{rows}</ul><p>Разовая оплата за выбранный период. После подтверждения '
             'платежа Premium включается в вашем аккаунте. Автопродления нет.</p>'
             f'{text}<p><a href="/#/profile">Открыть PetCare</a></p></main></html>'
         )
+
+    @app.get('/premium/offer.pdf', include_in_schema=False)
+    def premium_offer_pdf():
+        if not PUBLISHED_OFFER_PDF.is_file():
+            raise HTTPException(404, 'Оферта не опубликована.')
+        return FileResponse(PUBLISHED_OFFER_PDF, media_type='application/pdf')
 
     app.include_router(router)

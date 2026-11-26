@@ -1,20 +1,23 @@
 """Administrator routes. Every private operation checks the actor on the server."""
 from datetime import datetime, timedelta
+from hashlib import sha256
 from ipaddress import ip_address
 import os
 from pathlib import Path
 import re
+from typing import Annotated
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, StringConstraints
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from auth import get_current_user, get_password_hash, verify_password
 from database import get_db
 from features import Registration, delete_account_data, enforce_quota, password_ok, public_email, user_json
-from login_guard import IP_LIMIT, IP_PAUSE, account_key, insert_if_absent, support_contact
+from login_guard import IP_LIMIT, account_key, insert_if_absent, support_contact
 import models
 from premium_pricing import PremiumPrices, premium_prices, set_premium_prices
 from server_metrics import server_metrics
@@ -112,8 +115,34 @@ class SupportChange(BaseModel):
     support_contact: str = Field(max_length=500)
 
 
+class BroadcastInput(BaseModel):
+    request_id: UUID
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
 def install_admin(app):
     router = APIRouter(prefix='/api/v1/admin', tags=['Администрирование'])
+
+    @router.post('/notifications', status_code=201)
+    def broadcast(data: BroadcastInput, actor=Depends(require_admin), db=Depends(get_db)):
+        find_user(db, actor.id, lock=True)
+        key = sha256(f'broadcast:{actor.id}:{data.request_id}'.encode()).hexdigest()
+        item = db.query(models.InboxNotice).filter_by(key=key).first()
+        if item is None:
+            item = models.InboxNotice(key=key, title=data.title, body=data.body)
+            db.add(item)
+            audit(db, actor, actor.id, 'notification_broadcast')
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                item = db.query(models.InboxNotice).filter_by(key=key).first()
+                if item is None:
+                    raise
+        if (data.title, data.body) != (item.title, item.body):
+            raise HTTPException(409, 'Содержимое рассылки изменилось. Отправьте её повторно.')
+        return {'id': item.id}
 
     @router.get('/users')
     def users(offset: int = Query(0, ge=0), search: str = Query('', max_length=100),
@@ -296,8 +325,7 @@ def install_admin(app):
     @router.get('/blocked-ips')
     def blocked_ips(offset: int = Query(0, ge=0), actor=Depends(require_admin), db=Depends(get_db)):
         query = db.query(models.LoginGuard).filter(models.LoginGuard.key.startswith('ip:'),
-                                                   models.LoginGuard.failures >= IP_LIMIT,
-                                                   models.LoginGuard.blocked_until > datetime.utcnow() - IP_PAUSE)
+                                                   models.LoginGuard.failures >= IP_LIMIT)
         rows = query.order_by(models.LoginGuard.blocked_until.desc(), models.LoginGuard.key).offset(offset).limit(50)
         return {'ips': [{'ip_address': row.key[3:], 'blocked_at': row.blocked_until,
                          'failures': row.failures} for row in rows], 'total': query.count()}

@@ -1,8 +1,9 @@
-import { uiText } from '../i18n';
+import { language, uiText } from '../i18n';
 import { LanguagePicker } from '../i18n/LanguagePicker';
 import { ThemePicker } from '../features/appearance/ThemePicker';
 import { PremiumPlan } from '../features/billing/PremiumPlan';
 import { BetaFeedbackButton } from '../components/BetaFeedback';
+import { NotificationInbox } from '../features/notifications/NotificationInbox';
 
 export function ProfilePage() {
   return (
@@ -27,6 +28,7 @@ export function ProfilePage() {
       </div>
 
       <div className="settings-list" id="profile-settings" hidden>
+        <NotificationInbox />
         <details className="settings-group" id="settings-notifications">
           <summary><span>{uiText("Уведомления")}<small>{uiText("Напоминания, почта и тихие часы")}</small></span></summary>
           <div className="settings-body" id="settings-notifications-body">
@@ -37,7 +39,11 @@ export function ProfilePage() {
               <button className="btn tiny" id="test-push-btn" type="button">{uiText("Проверить уведомление")}</button>
               <span id="push-status-badge" className="push-status-pill off">{uiText("Уведомления выключены")}</span>
             </div>
-            <button className="btn" id="subscribe-push" type="button">{uiText("Получать уведомления при закрытом сайте")}</button>
+            <div className="background-push-setting">
+              <label><input type="checkbox" id="background-push" defaultChecked />{uiText("Получать уведомления при закрытом сайте")}</label>
+              <p id="background-push-status" role="status" />
+              <button className="btn" id="subscribe-push" type="button" hidden>{language === 'en' ? 'Allow on this device' : 'Разрешить на этом устройстве'}</button>
+            </div>
             <label><input type="checkbox" id="email-reminders" />{" "+uiText("Получать напоминания по почте")}</label>
           </div>
         </details>

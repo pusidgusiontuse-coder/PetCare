@@ -88,7 +88,7 @@ def test_only_owner_receives_invitation_capability(client):
 
 
 def test_foreign_feeding_reference_is_rejected(client):
-    owner=user();p1=pet(client,owner[2]);p2=pet(client,owner[2])
+    owner=user(paid=True);p1=pet(client,owner[2]);p2=pet(client,owner[2])
     plan=client.post(f"/api/v1/pets/{p1['id']}/meal-plans",headers=owner[2],json={'food':'Корм','time':'12:00'}).json()
     r=client.post(f"/api/v1/pets/{p2['id']}/feeding-logs",headers=owner[2],json={'food':'Корм','meal_plan_id':plan['id']})
     assert r.status_code==404

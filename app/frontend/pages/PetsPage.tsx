@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react';
 import { uiText } from '../i18n';
 
-export function PetsPage() {
+export function PetsPage({ greeting }: { greeting: ReactNode }) {
   return (
     <>
       <section id="pets" className="section">
@@ -14,6 +15,7 @@ export function PetsPage() {
             <button className="btn primary" data-modal="pet" type="button">{"+ "+uiText("Добавить питомца")}</button>
           </div>
         </div>
+        {greeting}
         <div id="pet-cards" className="pet-grid" />
         <section id="today-panel" className="panel glass" aria-labelledby="today-heading" hidden>
           <h2 id="today-heading">{uiText("Сегодня")}</h2>

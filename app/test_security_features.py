@@ -116,19 +116,59 @@ def test_preferences_persist_per_account(client):
     assert not client.get('/api/v1/notifications/settings',headers=other).json()['quietEnabled']
     assert client.put('/api/v1/notifications/settings',headers=h,json={'quietStart':'99:10'}).status_code==422
 
+
+def test_notification_inbox_and_admin_broadcast(client, monkeypatch):
+    from notifications import send_broadcasts
+
+    _, _, admin = user(admin=True)
+    uid, _, member = user()
+    other_id, _, other = user()
+    assert client.get('/api/v1/notifications/settings', headers=member).json()['backgroundPushEnabled'] is True
+    client.put('/api/v1/notifications/settings', headers=other, json={'backgroundPushEnabled': False}).raise_for_status()
+    message = {'request_id': str(uuid.uuid4()), 'title': 'С Новым годом!', 'body': 'Загляните в оформление.'}
+    assert client.post('/api/v1/admin/notifications', headers=member, json=message).status_code == 403
+    first = client.post('/api/v1/admin/notifications', headers=admin, json=message)
+    assert first.status_code == 201
+    assert client.post('/api/v1/admin/notifications', headers=admin, json=message).json() == first.json()
+    with SessionLocal() as db:
+        db.add(models.InboxNotice(key='my-reminder', user_id=uid, title='Уход', body='Личное напоминание'))
+        for index, recipient in enumerate((uid, other_id)):
+            db.add(models.PushSubscription(user_id=recipient, endpoint=f'https://fcm.googleapis.com/broadcast-test-{index}', data='{}'))
+        db.commit()
+    member_inbox = client.get('/api/v1/notifications/inbox', headers=member).json()['items']
+    other_inbox = client.get('/api/v1/notifications/inbox', headers=other).json()['items']
+    assert [item['title'] for item in member_inbox] == ['Уход', message['title']]
+    assert [item['title'] for item in other_inbox] == [message['title']]
+    late_user = user()[2]
+    assert client.get('/api/v1/notifications/inbox', headers=late_user).json()['items'] == []
+    monkeypatch.setenv('VAPID_PRIVATE_KEY', 'test-key')
+    with SessionLocal() as db, patch('pywebpush.webpush') as send:
+        send_broadcasts(db)
+        send_broadcasts(db)
+        assert send.call_count == 1
+        assert json.loads(send.call_args.kwargs['data'])['page'] == 'profile'
+
 def test_push_ssrf_blocked(client):
     assert client.post('/api/v1/notifications/subscribe',headers=user()[2],json={'endpoint':'https://127.0.0.1/private','keys':{'auth':'x','p256dh':'x'}}).status_code==422
 
 def test_free_limit_and_admin_entitlements(client):
     uid,email,h=user();admin=user(admin=True)
-    for _ in range(3):pet(client,h)
-    r=client.post('/api/v1/pets',headers=h,json={'name':'Fourth','species':'Кот','birth_date':'2024-01-01'})
+    first = pet(client,h)
+    assert client.get('/api/v1/billing/status',headers=h).json()['pet_limit'] == 1
+    second = {'name':'Second','species':'Кот','birth_date':'2024-01-01'}
+    r=client.post('/api/v1/pets',headers=h,json=second)
     assert r.status_code==403,r.text
+    other = user()[2]
+    assert client.post('/api/v1/pets/join-by-code',headers=other,json={'invite_code':first['share_code']}).status_code == 200
+    assert client.post('/api/v1/pets',headers=other,json=second).status_code == 403
     assert client.get('/api/v1/admin/users',headers=h).status_code==403
     assert client.patch(f'/api/v1/admin/users/{uid}/premium',headers=h,json={'enabled':True}).status_code==403
     assert client.patch(f'/api/v1/admin/users/{uid}/premium',headers=admin[2],json={'enabled':True,'days':30}).status_code==200
     pet(client,h)
     assert client.get('/api/v1/billing/status',headers=h).json()['premium']
+    assert client.patch(f'/api/v1/admin/users/{uid}/premium',headers=admin[2],json={'enabled':False}).status_code == 200
+    assert len(client.get('/api/v1/pets',headers=h).json()) == 2
+    assert client.post('/api/v1/pets',headers=h,json=second).status_code == 403
 
 def test_admin_block_revoke_and_no_promotion(client):
     uid,email,h=user();admin=user(admin=True)
@@ -363,8 +403,18 @@ def test_browser_session_requires_csrf_header_and_clears_on_logout(client):
     login = client.post('/api/v1/auth/login', headers=browser, json={'email': email, 'password': 'test-password'})
     assert login.status_code == 200 and 'access_token' not in login.json()
     cookie = next(value for value in login.headers.get_list('set-cookie') if value.startswith(auth.SESSION_COOKIE + '='))
-    assert 'HttpOnly' in cookie and 'SameSite=strict' in cookie and 'Max-Age=28800' in cookie
-    assert client.get('/api/v1/auth/me').json()['email'] == email
+    assert 'HttpOnly' in cookie and 'SameSite=strict' in cookie and f'Max-Age={auth.BROWSER_COOKIE_MAX_AGE}' in cookie
+    with SessionLocal.begin() as db:
+        account = db.query(models.User).filter_by(email=email).one()
+        account.is_admin = True
+        session = db.query(models.LoginSession).filter_by(user_id=account.id).order_by(
+            models.LoginSession.created_at.desc()
+        ).first()
+        session.created_at -= timedelta(days=45)
+        assert session.expires_at == auth.PERMANENT_SESSION_EXPIRY
+    refreshed = client.get('/api/v1/auth/session', headers=browser)
+    assert refreshed.json()['email'] == email
+    assert f'Max-Age={auth.BROWSER_COOKIE_MAX_AGE}' in refreshed.headers['set-cookie']
     assert client.post('/api/v1/auth/logout').status_code == 403
     assert client.post('/api/v1/auth/logout', headers=browser).status_code == 200
     assert client.cookies.get(auth.SESSION_COOKIE) is None

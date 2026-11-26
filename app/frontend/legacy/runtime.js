@@ -1,4 +1,4 @@
-import { formatLocale, uiText, htmlUiText } from '../i18n';
+import { formatLocale, language, uiText, htmlUiText } from '../i18n';
 import { ApiError, createApiClient, hasBrowserSession } from '../lib/api';
 import { setAppearanceAccount } from '../features/appearance/store';
 import { bindFilePicker, filePickerMarkup, readUpload, uploadError } from '../lib/filePicker';
@@ -98,6 +98,17 @@ try {
 const guestUser = () => ({ id: null, name: uiText("Гость"), email: '', timezone: 'Europe/Moscow' });
 const hasSession = () => Boolean(authToken && state.user.id != null);
 
+let backgroundConnectedAccount = null;
+let backgroundConnection = null;
+const defaultPushSettings = {
+  pushEnabled: true,
+  backgroundPushEnabled: true,
+  quietStart: '22:00',
+  quietEnd: '08:00',
+  quietEnabled: false,
+  types: ['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка']
+};
+
 let state = {
   user: guestUser(),
   selected: null,
@@ -115,13 +126,7 @@ let state = {
   members: [],
   contacts: {},
   avatar: {},
-  settings: savedPushSettings || {
-    pushEnabled: typeof Notification !== 'undefined' && Notification.permission === 'granted',
-    quietStart: '22:00',
-    quietEnd: '08:00',
-    quietEnabled: false,
-    types: ['Кормление', 'Препарат', 'Процедура', 'Ветеринар', 'Прогулка']
-  }
+  settings: { ...defaultPushSettings, ...savedPushSettings }
 };
 
 function clearSession() {
@@ -130,6 +135,9 @@ function clearSession() {
   setAppearanceAccount(null);
   try { localStorage.removeItem(STORAGE_AUTH_KEY); } catch {}
   state.user = guestUser();
+  state.settings = { ...defaultPushSettings };
+  backgroundConnectedAccount = null;
+  window.petcareServerPush = false;
   state.selected = null;
   for (const collection of [
     'pets', 'events', 'activity', 'health', 'prescriptions', 'weights', 'nutrition',
@@ -236,6 +244,7 @@ function logActivity(petId, action, icon = '🐾', actor = state.user.name || '�
 // =====================================================================
 // Queue explicit refreshes: parallel responses must not append into shared arrays.
 let syncTail = Promise.resolve(), syncPending = 0;
+let lastSyncFinishedAt = -Infinity;
 function syncServerData(silent = false) {
   syncPending += 1;
   const request = syncTail.then(async () => {
@@ -244,6 +253,7 @@ function syncServerData(silent = false) {
     try {
       await loadServerData();
     } finally {
+      lastSyncFinishedAt = performance.now();
       if (showProgress) endConnectionWait();
     }
   });
@@ -487,7 +497,12 @@ async function loadServerData() {
 
       const [remoteSettings, rems] = await Promise.all([settingsRequest, remindersRequest]);
       if (sessionToken !== authToken) return;
-      if (remoteSettings) state.settings = { ...state.settings, ...remoteSettings };
+      if (remoteSettings) {
+        state.settings = { ...defaultPushSettings, ...remoteSettings };
+        if (state.settings.backgroundPushEnabled && 'Notification' in window && Notification.permission === 'granted') {
+          void connectBackgroundPush().catch(() => {});
+        }
+      }
       if (Array.isArray(rems)) state.events = rems.map(normalizeReminder);
       if (page === 'match') void loadMatchDataForActivePet();
     }
@@ -2656,6 +2671,9 @@ $('api-logout').onclick = async () => {
 };
 
 // Automatic background sync on window focus / visibility change / interval
+const backgroundSyncDelay = 60000 + Math.random() * 10000;
+const returnSyncDelay = 20000;
+
 function canAutoSync() {
   if (page === 'care' || syncPending > 0) return false;
   if (page === 'match' && $('match-profile-form')?.dataset.dirty === 'true') return false;
@@ -2664,18 +2682,17 @@ function canAutoSync() {
   return true;
 }
 
-window.addEventListener('focus', () => {
-  if (page === 'care') void refreshSharedCare();
-  else if (canAutoSync()) syncServerData(true);
-});
-document.addEventListener('visibilitychange', () => {
+function syncOnReturn() {
   if (document.hidden) return;
   if (page === 'care') void refreshSharedCare();
-  else if (canAutoSync()) syncServerData(true);
-});
+  else if (canAutoSync() && performance.now() - lastSyncFinishedAt >= returnSyncDelay) void syncServerData(true);
+}
+
+window.addEventListener('focus', syncOnReturn);
+document.addEventListener('visibilitychange', syncOnReturn);
 setInterval(() => {
-  if (canAutoSync()) syncServerData(true);
-}, 20000);
+  if (canAutoSync() && performance.now() - lastSyncFinishedAt >= backgroundSyncDelay) void syncServerData(true);
+}, 5000);
 setInterval(() => void refreshSharedCare(), 15000);
 
 // Document recognition is paused; the Health screen shows a locked “Скоро” card.
@@ -3260,6 +3277,7 @@ function updatePushStatusUI() {
     badge.textContent = active ? uiText("🔔 Пуш-уведомления активны") : uiText("Уведомления выключены");
     badge.classList.toggle('off', !active);
   }
+  updateBackgroundPushStatus();
 }
 
 async function requestBrowserNotificationPermission() {
@@ -3711,13 +3729,66 @@ $('install-web').onclick = async () => {
 updateInstallStatus();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>feedback(uiText("Не удалось подготовить установку приложения. Проверьте сеть и HTTPS.")));
 function base64Key(value){return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4)),c=>c.charCodeAt(0));}
-$('subscribe-push').onclick=async()=>{try{
- if(!('serviceWorker'in navigator)||!('PushManager'in window))throw Error(uiText("Этот браузер не поддерживает push. На iPhone сначала установите PetCare на главный экран."));
- const config=await apiFetch('/notifications/config');if(!config.configured||!config.public_key)throw Error(uiText("Сервер уведомлений ещё не настроен."));
- if(await Notification.requestPermission()!=='granted')throw Error(uiText("Разрешите уведомления в настройках браузера."));
- const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64Key(config.public_key)});
- await apiFetch('/notifications/subscribe',{method:'POST',body:JSON.stringify(sub.toJSON())}); window.petcareServerPush=true;feedback(uiText("Серверные уведомления подключены на этом устройстве."));
- }catch(e){feedback(e.message);}};
+
+function supportsBackgroundPush() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function updateBackgroundPushStatus() {
+  const enabled = Boolean(state.settings.backgroundPushEnabled);
+  const supported = supportsBackgroundPush();
+  const connected = enabled && backgroundConnectedAccount !== null && backgroundConnectedAccount === state.user.id;
+  window.petcareServerPush = connected;
+  $('background-push').checked = enabled;
+  $('subscribe-push').hidden = !enabled || !supported || connected;
+  $('background-push-status').textContent = language === 'en'
+    ? !enabled ? 'Off for this account.' : connected ? 'Active on this device.' : supported ? 'Allow notifications in your browser to receive them here.' : 'On iPhone, open PetCare from the Home Screen to allow notifications.'
+    : !enabled ? 'Выключено для этого аккаунта.' : connected ? 'Активно на этом устройстве.' : supported ? 'Разрешите уведомления в браузере, чтобы получать их на этом устройстве.' : 'На iPhone разрешить уведомления можно в PetCare с главного экрана.';
+}
+
+async function connectBackgroundPush() {
+  const accountId = state.user.id;
+  if (accountId == null || !state.settings.backgroundPushEnabled || !supportsBackgroundPush() || Notification.permission !== 'granted') return;
+  if (backgroundConnectedAccount === accountId) return;
+  if (backgroundConnection?.accountId === accountId) return backgroundConnection.promise;
+  const promise = (async () => {
+    const config = await apiFetch('/notifications/config');
+    if (!config?.configured || !config.public_key) throw Error(uiText('Сервер уведомлений ещё не настроен.'));
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration?.active) throw Error(uiText('Не удалось подготовить установку приложения. Проверьте сеть и HTTPS.'));
+    if (state.user.id !== accountId || !state.settings.backgroundPushEnabled) return;
+    const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({
+      userVisibleOnly: true, applicationServerKey: base64Key(config.public_key)
+    });
+    if (state.user.id !== accountId || !state.settings.backgroundPushEnabled) return;
+    await apiFetch('/notifications/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
+    if (state.user.id === accountId) {
+      backgroundConnectedAccount = accountId;
+      updateBackgroundPushStatus();
+    }
+  })();
+  backgroundConnection = { accountId, promise };
+  try { await promise; } finally {
+    if (backgroundConnection?.promise === promise) backgroundConnection = null;
+  }
+}
+
+$('subscribe-push').onclick = async () => {
+  try {
+    if (await requestBrowserNotificationPermission() !== 'granted') throw Error(uiText('Разрешите уведомления в настройках браузера.'));
+    await connectBackgroundPush();
+  } catch (error) { feedback(error.message); }
+};
+
+$('background-push').onchange = async event => {
+  const checkbox = event.currentTarget;
+  const previous = state.settings.backgroundPushEnabled;
+  state.settings.backgroundPushEnabled = checkbox.checked;
+  checkbox.disabled = true;
+  try { await savePushSettings(); } catch { state.settings.backgroundPushEnabled = previous; }
+  finally { checkbox.disabled = false; updateBackgroundPushStatus(); }
+  void connectBackgroundPush().catch(() => {});
+};
 async function refreshMembers(){
  const p=pet();$('server-members').innerHTML='';if(!p||p.ownerId!==state.user.id)return;
  const list=await apiFetch('/pets/'+p.serverId+'/members');
@@ -3728,7 +3799,7 @@ async function refreshMembers(){
 const originalRenderProfile=renderProfile;
 renderProfile=function(){originalRenderProfile();if(authToken)refreshMembers().catch(e=>feedback(e.message));};
 
-if('serviceWorker' in navigator)navigator.serviceWorker.ready.then(async r=>{window.petcareServerPush=Boolean(await r.pushManager.getSubscription());}).catch(()=>{});
+if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(connectBackgroundPush).catch(() => {});
 
 $('email-reminders').onchange=async()=>{const previous=Boolean(state.settings.emailEnabled);state.settings.emailEnabled=$('email-reminders').checked;try{await savePushSettings();}catch(e){state.settings.emailEnabled=previous;$('email-reminders').checked=previous;}};
 

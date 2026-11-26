@@ -1,0 +1,21 @@
+.notice-inbox { scroll-margin-top: 85px; }
+.notice-list { margin: 0; padding: 0; display: grid; gap: 10px; list-style: none; }
+.notice-list li { padding: 14px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.notice-list time { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.notice-list p, .notice-toast p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice-toast {
+  position: fixed; z-index: 131; top: max(14px, env(safe-area-inset-top)); right: 16px;
+  width: min(390px, calc(100% - 32px)); padding: 16px 54px 16px 18px;
+  border: 1px solid var(--line); border-radius: 22px; background: var(--surface);
+  color: var(--ink); box-shadow: 0 10px 40px #0003;
+}
+.notice-toast p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.notice-toast a { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent-dark); }
+.notice-toast button {
+  position: absolute; inset: 6px 6px auto auto; min-width: 44px; min-height: 44px;
+  border: 0; border-radius: 50%; color: inherit; background: transparent; font-size: 24px; cursor: pointer;
+}
+.background-push-setting { display: grid; gap: 7px; }
+.background-push-setting label { display: flex; align-items: center; gap: 9px; min-height: 44px; }
+.background-push-setting p { margin: 0; color: var(--muted); font-size: 13px; }
+.background-push-setting .btn { justify-self: start; }

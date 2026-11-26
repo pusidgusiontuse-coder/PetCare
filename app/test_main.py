@@ -164,9 +164,13 @@ class TestPetCareCoreAPI(unittest.TestCase):
 
     def test_pet_crud_and_shared_access_by_code(self):
         """Создание питомца, редактирование карточки и подключение совладельца по коду"""
+        from test_security_features import user
+
+        owner = user()[2]
+        member = user()[2]
         create_resp = self.client.post(
             "/api/v1/pets",
-            headers=self.headers1,
+            headers=owner,
             json={
                 "name": "Оскар",
                 "species": "Кот",
@@ -185,7 +189,7 @@ class TestPetCareCoreAPI(unittest.TestCase):
         # Обновление данных питомца
         upd_resp = self.client.patch(
             f"/api/v1/pets/{pet_id}",
-            headers=self.headers1,
+            headers=owner,
             json={"notes": "Любит активные игры"},
         )
         self.assertEqual(upd_resp.status_code, 200)
@@ -194,14 +198,14 @@ class TestPetCareCoreAPI(unittest.TestCase):
         # Второй пользователь подключается к питомцу по коду совместного ухода
         join_resp = self.client.post(
             "/api/v1/pets/join-by-code",
-            headers=self.headers2,
+            headers=member,
             json={"invite_code": share_code},
         )
         self.assertEqual(join_resp.status_code, 200)
         self.assertTrue(join_resp.json()["is_shared"])
 
         # Удаление тестового питомца владельцем
-        del_resp = self.client.delete(f"/api/v1/pets/{pet_id}", headers=self.headers1)
+        del_resp = self.client.delete(f"/api/v1/pets/{pet_id}", headers=owner)
         self.assertEqual(del_resp.status_code, 204)
 
     def test_health_records_weights_and_auto_reminders(self):

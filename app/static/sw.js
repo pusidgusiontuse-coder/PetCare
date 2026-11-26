@@ -10,5 +10,23 @@ self.addEventListener('fetch', event => {
     event.respondWith(fetch(request).catch(() => caches.open(CACHE).then(cache => cache.match('/static/offline.html'))));
   }
 });
-self.addEventListener('push',e=>{let p={};try{p=e.data.json();}catch{} e.waitUntil(self.registration.showNotification(p.title||'PetCare',{body:p.body||'Проверьте запланированные события.',icon:'/static/icon-192.png',badge:'/static/icon-192.png',tag:p.tag||'petcare',data:{url:'/'}}));});
-self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{let w=windows.find(w=>new URL(w.url).origin===self.location.origin);return w?w.focus():clients.openWindow('/');}));});
+self.addEventListener('push', event => {
+  let payload = {};
+  try { payload = event.data.json(); } catch {}
+  event.waitUntil(self.registration.showNotification(payload.title || 'PetCare', {
+    body: payload.body || 'Проверьте запланированные события.',
+    icon: '/static/icon-192.png', badge: '/static/icon-192.png', tag: payload.tag || 'petcare',
+    data: { inbox: payload.page === 'profile' }
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  const inbox = event.notification.data?.inbox;
+  event.notification.close();
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async windows => {
+    const client = windows.find(window => new URL(window.url).origin === self.location.origin);
+    if (!client) return clients.openWindow(inbox ? '/#/profile/notifications' : '/');
+    if (inbox) client.postMessage({ type: 'petcare-open-inbox' });
+    return client.focus();
+  }));
+});

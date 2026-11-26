@@ -1,0 +1,264 @@
+.new-year {
+  --new-year-ink: #f9f1dc;
+  --new-year-gold: #f1cc89;
+  margin-block: 18px 24px;
+  overflow: hidden;
+  border: 1px solid #557166;
+  border-radius: 24px;
+  background: #102d26;
+  color: var(--new-year-ink);
+  box-shadow: 0 12px 24px rgb(13 39 32 / 12%);
+}
+
+.new-year-scene {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  align-items: center;
+  min-height: 188px;
+  background: linear-gradient(120deg, #12352b, #102a24);
+}
+
+.new-year-photo,
+.new-year-scene::after {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 68%;
+  height: 100%;
+  z-index: -1;
+}
+
+.new-year-photo {
+  object-fit: cover;
+  object-position: 70% 43%;
+}
+
+.new-year-scene::after {
+  content: '';
+  background: linear-gradient(90deg, #123229 0%, rgb(18 50 41 / 86%) 18%, transparent 58%);
+}
+
+.new-year-copy {
+  padding: 28px clamp(19px, 3.6vw, 42px);
+  max-width: 58%;
+}
+
+.new-year-label {
+  margin: 0 0 8px;
+  color: var(--new-year-gold);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.new-year h2 {
+  margin: 0;
+  color: inherit;
+  font-size: clamp(23px, 4vw, 46px);
+  line-height: 1.06;
+  letter-spacing: -.04em;
+  text-wrap: balance;
+}
+
+.new-year-message {
+  margin: 10px 0 0;
+  color: #f5ebd5;
+  font-size: clamp(12px, 1.7vw, 15px);
+  line-height: 1.45;
+}
+
+.new-year-lights span {
+  position: absolute;
+  pointer-events: none;
+  color: var(--new-year-gold);
+  text-shadow: 0 0 10px rgb(247 206 139 / 75%);
+  animation: new-year-lights-in 1.6s ease-out both;
+}
+
+.new-year-lights span:nth-child(1) { top: 14%; left: 50%; font-size: 20px; }
+.new-year-lights span:nth-child(2) { top: 62%; left: 56%; font-size: 11px; animation-delay: 160ms; }
+.new-year-lights span:nth-child(3) { top: 76%; right: 5%; font-size: 15px; animation-delay: 320ms; }
+
+@keyframes new-year-lights-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.new-year-details {
+  border-top: 1px solid rgb(241 204 137 / 24%);
+}
+
+.new-year-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 8px clamp(19px, 3.6vw, 42px);
+  color: var(--new-year-gold);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.new-year-details summary::-webkit-details-marker { display: none; }
+.new-year-details summary:hover { background: rgb(255 255 255 / 7%); }
+.new-year-details summary:focus-visible { outline: 2px solid var(--new-year-gold); outline-offset: -4px; }
+.new-year-details summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-2px) rotate(45deg);
+}
+.new-year-details[open] summary::after { transform: translateY(2px) rotate(225deg); }
+
+.new-year-details ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0 clamp(19px, 3.6vw, 42px) 16px calc(clamp(19px, 3.6vw, 42px) + 1.1em);
+  color: var(--new-year-ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.new-year-details li::marker { color: var(--new-year-gold); }
+
+.new-year-picker { min-inline-size: 0; margin: 20px 0 0; padding: 0; border: 0; }
+.new-year-picker legend { margin: 0 0 10px; padding: 0; font-weight: 800; }
+.new-year-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.new-year-options label { position: relative; cursor: pointer; }
+.new-year-options input { position: absolute; opacity: 0; }
+.new-year-options label > span {
+  display: grid; justify-items: center; gap: 3px; min-height: 62px; padding: 9px 3px;
+  border: 1px solid var(--line); border-radius: 13px; color: var(--ink);
+  font-size: clamp(10px, 2.85vw, 13px); font-weight: 700; overflow-wrap: anywhere;
+}
+.new-year-options i { color: var(--accent-dark); font-size: 15px; font-style: normal; }
+.new-year-options input:checked + span { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.new-year-options input:focus-visible + span { outline: 2px solid var(--accent-dark); outline-offset: 2px; }
+
+.app[data-new-year="max"] {
+  --festive-cranberry: #9a273c;
+  --festive-gold: #deb56d;
+  --festive-lights: radial-gradient(circle at 8px 3px, #fff0bc 0 1.5px, #eac381 1.5px 2.5px, transparent 5px), radial-gradient(circle at 26px 5px, #fd7780 0 1.5px, #d64c64 1.5px 2px, transparent 4px), radial-gradient(circle at 44px 3px, #d9f0de 0 1.5px, #89c5ad 1.5px 2px, transparent 5px);
+}
+
+.brand-emblem { position: relative; flex: none; display: block; }
+
+:where(.app[data-new-year="max"] .brand, #root:has(.app[data-new-year="max"]) .auth-logo, [data-festive-brand]) .brand-emblem::before {
+  content: ''; position: absolute; pointer-events: none;
+  inset: auto 0 calc(100% + 1px); height: 13px;
+  background: url('./tinsel-logo.webp') center / 100% 100% no-repeat;
+  filter: drop-shadow(0 1px 1px #75243655);
+}
+
+:where(.app[data-new-year="max"] .brand, #root:has(.app[data-new-year="max"]) .auth-logo, [data-festive-brand]) .brand-emblem::after {
+  content: ''; position: absolute; pointer-events: none;
+  top: calc(100% - 3px); left: -3px; z-index: 1; width: 10px; height: 13px;
+  background: linear-gradient(90deg, #ad7929, #fce0a6 45%, #ad7929) 50% 1px / 4px 4px no-repeat,
+    radial-gradient(circle at 36% 30%, #fff5c9, #eab85b 25%, #b77829 60%, #804310 76%) 50% 4px / 10px 9px no-repeat;
+  border-radius: 0 0 50% 50%; filter: drop-shadow(0 1px 1px #4b252b50);
+}
+
+:where(.app[data-new-year="max"] .brand, #root:has(.app[data-new-year="max"]) .auth-logo, [data-festive-brand]) .brand-mark {
+  box-shadow: 0 0 0 1px #e0b363c7, 0 0 12px #e1b36455;
+}
+
+[data-festive-brand] { display: inline-flex; align-items: center; gap: 8px; margin-block: 9px 6px; }
+[data-festive-brand] .brand-mark { width: 28px; height: 28px; border-radius: 9px; background: #224737; }
+
+.app[data-new-year="max"] .content {
+  background-image: radial-gradient(circle at 16px 17px, #c08f5033 0 1px, transparent 1.7px),
+    radial-gradient(circle at 48px 33px, #a4465821 0 1.2px, transparent 1.9px),
+    radial-gradient(circle at 31px 62px, #b5c5b451 0 1px, transparent 1.8px);
+  background-size: 76px 78px, 93px 103px, 125px 131px;
+}
+.app[data-new-year="max"] .sidebar .nav :is(a,button).active,
+.app[data-new-year="max"] .sidebar .all-pets.active {
+  box-shadow: inset 0 0 0 1px #deb56daa;
+}
+
+.app[data-new-year="max"] :is(.topline, .app-header) {
+  border-bottom-color: color-mix(in srgb, var(--festive-gold) 55%, var(--line));
+}
+.app[data-new-year="max"] .section .topline h1::after {
+  content: ''; display: inline-block; vertical-align: top; width: .28em; height: .28em;
+  margin: .16em 0 0 .25em; background: var(--festive-cranberry);
+  clip-path: polygon(50% 0, 64% 35%, 100% 50%, 64% 65%, 50% 100%, 36% 65%, 0 50%, 36% 35%);
+}
+.app[data-new-year="max"] .section :is(.panel, .settings-group, .pet-card) {
+  border-color: color-mix(in srgb, var(--festive-gold) 45%, var(--line));
+}
+.app[data-new-year="max"] .section .btn.primary {
+  background: linear-gradient(128deg, #86233b, #ad3449); border-color: #ac4e55; color: #fff4e8;
+}
+.app[data-new-year="max"] .new-year { border-color: var(--festive-gold); }
+.app[data-new-year="max"] .new-year-scene { min-height: 215px; }
+.app[data-new-year="max"] .new-year-details { background: #74243a; }
+.app[data-new-year="max"] .new-year-scene::before {
+  content: ''; position: absolute; z-index: 1; inset: 3px 12px auto; height: 10px; pointer-events: none;
+  background: var(--festive-lights) 0 0 / 55px 10px repeat-x;
+}
+
+@media (min-width: 1024px) {
+  .app[data-new-year="max"] .sidebar .nav {
+    padding-top: 12px;
+    background: var(--festive-lights) 0 0 / 55px 10px repeat-x;
+  }
+}
+
+@media (max-width: 1023px) {
+  .app[data-new-year="max"] .sidebar { padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+  .app[data-new-year="max"] .sidebar .nav {
+    border-color: color-mix(in srgb, var(--festive-gold) 72%, var(--line)); overflow: visible;
+    box-shadow: 0 5px 23px #5f241833, 0 0 0 1px #bd554339;
+  }
+  .app[data-new-year="max"] .sidebar .nav::before {
+    content: ''; position: absolute; inset: -4px 17px auto; z-index: -1;
+    height: 10px; pointer-events: none; background: var(--festive-lights) 0 0 / 55px 10px repeat-x;
+  }
+  .app[data-new-year="max"] .sidebar .nav::after {
+    content: ''; position: absolute; inset: auto 11px -8px; height: 17px; pointer-events: none;
+    background: url('./tinsel-nav.webp') center / 100% 100% no-repeat;
+    filter: drop-shadow(0 2px 1px #76213955);
+  }
+  .app[data-new-year="max"] .sidebar .nav a:not(.mobile-pets)::after {
+    content: ''; position: absolute; top: 3px; left: calc(50% + 11px);
+    width: 9px; height: 13px; pointer-events: none; border-radius: 0 0 55% 55%;
+    background: linear-gradient(#e8bd72, #b17d3d) top center / 1px 5px no-repeat,
+      radial-gradient(circle at 35% 25%, #fff1de, #dc647b 24%, #a72b47 59%, #6c1530 79%) center bottom / 9px 9px no-repeat;
+    filter: drop-shadow(0 1px 1px #682b2640);
+  }
+  .app[data-new-year="max"] .sidebar .nav a:is([data-page="nutrition"], [data-page="care"])::after {
+    filter: hue-rotate(35deg) saturate(.8) drop-shadow(0 1px 1px #682b2640);
+  }
+  .app[data-new-year="max"] .sidebar .nav .mobile-pets::after {
+    content: ''; position: absolute; top: 1px; left: calc(50% + 11px); width: 16px; height: 20px; pointer-events: none;
+    background: linear-gradient(#eac674 0 13%, #277252 13% 85%, #976538 85%);
+    clip-path: polygon(50% 0, 73% 29%, 64% 29%, 83% 53%, 73% 53%, 100% 82%, 60% 82%, 60% 100%, 40% 100%, 40% 82%, 0 82%, 27% 53%, 17% 53%, 36% 29%, 27% 29%);
+  }
+  .app[data-new-year="max"] .sidebar .nav .mobile-pets.active > svg {
+    background: #892941; color: #fff5e4; outline-color: var(--festive-gold);
+  }
+}
+
+@media (max-width: 560px) {
+  .new-year { margin-block: 14px 20px; border-radius: 20px; }
+  .new-year-scene { min-height: 152px; }
+  .app[data-new-year="max"] .new-year-scene { min-height: 174px; }
+  .new-year-copy { max-width: 64%; padding-block: 19px; }
+  .new-year-photo, .new-year-scene::after { width: 64%; }
+  .new-year-photo { object-position: 73% 40%; }
+  .new-year-scene::after { background: linear-gradient(90deg, #123229 1%, rgb(18 50 41 / 70%) 29%, transparent 66%); }
+  .new-year-lights span:nth-child(2) { display: none; }
+  .new-year-lights span:nth-child(1) { left: 55%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-year-lights span { animation: none; }
+}

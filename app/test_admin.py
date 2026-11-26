@@ -29,7 +29,7 @@ def test_lock_expires_and_correct_password_resets_streak(monkeypatch):
     assert login('wrong').status_code == 401
 
 
-def test_ip_block_expires_and_admin_can_remove_it(monkeypatch):
+def test_ip_block_persists_until_admin_removes_it(monkeypatch):
     _, email, _ = user()
     _, _, admin = user(admin=True)
     monkeypatch.setattr(auth, 'verify_password', lambda candidate, _: candidate == 'test-password')
@@ -54,10 +54,11 @@ def test_ip_block_expires_and_admin_can_remove_it(monkeypatch):
         with SessionLocal() as db:
             state = db.get(models.LoginGuard, 'ip:' + ip)
             state.failures = 50
-            state.blocked_until = datetime.utcnow() - timedelta(minutes=16)
+            state.blocked_until = datetime.utcnow() - timedelta(days=2)
             db.commit()
-        assert ip not in [row['ip_address'] for row in client.get('/api/v1/admin/blocked-ips', headers=admin).json()['ips']]
-        assert client.post('/api/v1/auth/login', json={'email': email, 'password': 'test-password'}).status_code == 200
+        assert ip in [row['ip_address'] for row in client.get('/api/v1/admin/blocked-ips', headers=admin).json()['ips']]
+        assert client.post('/api/v1/auth/login', json={'email': email, 'password': 'test-password'}).status_code == 403
+        assert client.delete('/api/v1/admin/blocked-ips/' + ip, headers=admin).status_code == 200
     finally:
         client.patch('/api/v1/admin/settings', json={'support_contact': ''}, headers=admin)
 

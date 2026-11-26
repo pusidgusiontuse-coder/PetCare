@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import text, or_, update
+from sqlalchemy import text, or_, select, update
 from sqlalchemy.exc import IntegrityError
 import models
 from database import get_db
@@ -110,6 +110,8 @@ class MemberChange(BaseModel):
     expires_at: datetime | None = None
 
 class PreferenceInput(BaseModel):
+    pushEnabled: bool = True
+    backgroundPushEnabled: bool = True
     quietEnabled: bool = False
     quietStart: str = '22:00'
     quietEnd: str = '08:00'
@@ -188,7 +190,7 @@ def delete_account_data(db, u):
     for p in owned_pets:
         db.delete(p)
     db.query(models.PetMember).filter(models.PetMember.user_id==u.id).delete()
-    for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction):
+    for cls in (models.LoginSession,models.NotificationPreference,models.PushSubscription,models.EmailChallenge,models.RecoveryAction,models.InboxNotice):
         db.query(cls).filter(cls.user_id==u.id).delete(synchronize_session=False)
     db.delete(u)
 
@@ -196,11 +198,25 @@ def delete_account_data(db, u):
 def premium(u):
     return bool(u.premium_permanent or (u.premium_until and u.premium_until > datetime.utcnow()))
 
+FREE_PET_LIMIT = 1
+
+
 def enforce_pet_limit(db, user):
-    if premium(user): return
-    own=db.query(models.Pet).filter(models.Pet.owner_id==user.id).count()
-    shared=db.query(models.PetMember).filter(models.PetMember.user_id==user.id,models.PetMember.role.in_(['viewer','editor','co_owner']),or_(models.PetMember.expires_at.is_(None),models.PetMember.expires_at>datetime.utcnow())).count()
-    if own+shared>=3: raise HTTPException(403,'В бесплатной версии можно добавить до трёх питомцев. Для большего количества нужен платный доступ.')
+    # Serialize new pets and shared access granted to the same account.
+    user = db.get(models.User, user.id, with_for_update=True, populate_existing=True)
+    if premium(user):
+        return
+    owned = select(models.Pet.id).where(models.Pet.owner_id == user.id)
+    shared = select(models.PetMember.id).where(
+        models.PetMember.user_id == user.id,
+        models.PetMember.role.in_(['viewer', 'editor', 'co_owner']),
+        or_(models.PetMember.expires_at.is_(None), models.PetMember.expires_at > datetime.utcnow()),
+    )
+    count = len(db.scalars(owned.limit(FREE_PET_LIMIT).with_for_update()).all())
+    if count < FREE_PET_LIMIT:
+        count += len(db.scalars(shared.limit(FREE_PET_LIMIT - count).with_for_update()).all())
+    if count >= FREE_PET_LIMIT:
+        raise HTTPException(403, 'В бесплатной версии доступен один питомец. Для добавления ещё одного нужен Premium.')
 
 def user_json(u):
     return dict(id=u.id, full_name=u.full_name, email=u.email, timezone=u.timezone, theme=u.theme, email_verified=u.email_verified, is_admin=u.is_admin, disabled=u.disabled, premium=premium(u), premium_until=u.premium_until.isoformat() if u.premium_until else None)
@@ -226,8 +242,8 @@ def reminder_transition(db, reminder, previous):
 
 def install_features(app):
     from auth import (
-        ADMIN_SESSION_TTL, SESSION_TTL, clear_browser_session, create_access_token,
-        get_current_user, get_password_hash, session_response, verify_password,
+        BROWSER_HEADER, SESSION_COOKIE, clear_browser_session, create_access_token,
+        get_current_user, get_password_hash, session_response, set_browser_session, verify_password,
     )
     router = APIRouter(prefix='/api/v1')
     replaced = {'/api/v1/auth/register','/api/v1/auth/login','/api/v1/auth/user','/api/v1/auth/profile','/api/v1/auth/session','/api/v1/auth/me','/api/v1/documents/{doc_id}'}
@@ -276,15 +292,18 @@ def install_features(app):
         if not allowed:
             raise HTTPException(401, 'Неверная почта, логин или пароль')
         current = db.get(models.User, uid)
-        ttl = ADMIN_SESSION_TTL if current.is_admin else SESSION_TTL
-        token = create_access_token({'sub': str(uid)}, expires_delta=ttl,
+        token = create_access_token({'sub': str(uid)},
                                     device=request.headers.get('user-agent', 'Браузер')[:200],
                                     ip_address=ip, expected_version=version)
-        return session_response(request, response, token, user_json(current), ttl)
+        return session_response(request, response, token, user_json(current))
 
     @router.get('/auth/session')
     @router.get('/auth/me')
-    def me(u=Depends(get_current_user)): return user_json(u)
+    def me(request: Request, response: Response, u=Depends(get_current_user)):
+        if request.headers.get(BROWSER_HEADER) == '1' and not request.headers.get('Authorization'):
+            if token := request.cookies.get(SESSION_COOKIE):
+                set_browser_session(response, token)
+        return user_json(u)
 
     @router.post('/auth/codes')
     def code(data: CodeRequest, request: Request, db=Depends(get_db)):
@@ -344,12 +363,11 @@ def install_features(app):
         if item.purpose in ('password_reset','password_change','email_change'):
             db.query(models.EmailChallenge).filter(models.EmailChallenge.user_id==u.id).update({'consumed':True})
         db.commit(); db.refresh(u)
-        ttl = ADMIN_SESSION_TTL if u.is_admin else SESSION_TTL
         token = create_access_token(
-            {'sub': str(u.id)}, expires_delta=ttl,
+            {'sub': str(u.id)},
             device=request.headers.get('user-agent', 'Браузер')[:200], ip_address=peer_ip(request),
         )
-        return session_response(request, response, token, user_json(u), ttl)
+        return session_response(request, response, token, user_json(u))
 
     @router.put('/auth/user')
     @router.patch('/auth/profile')
@@ -443,7 +461,27 @@ def install_features(app):
 
     @router.get('/notifications/settings')
     def preferences(u=Depends(get_current_user),db=Depends(get_db)):
-        p=db.get(models.NotificationPreference,u.id); return json.loads(p.data) if p else PreferenceInput().model_dump()
+        p = db.get(models.NotificationPreference, u.id)
+        return PreferenceInput.model_validate_json(p.data) if p else PreferenceInput()
+
+    @router.get('/notifications/inbox')
+    def inbox(before: int | None = Query(None, gt=0), u=Depends(get_current_user), db=Depends(get_db)):
+        notice = models.InboxNotice
+        own = db.query(notice).filter(notice.user_id == u.id)
+        broadcasts = db.query(notice).filter(notice.user_id.is_(None))
+        if u.created_at:
+            broadcasts = broadcasts.filter(notice.created_at >= u.created_at)
+        # Select each audience independently so both can use the user/id index.
+        if before is not None:
+            own = own.filter(notice.id < before)
+            broadcasts = broadcasts.filter(notice.id < before)
+        items = sorted(own.order_by(notice.id.desc()).limit(31).all()
+                       + broadcasts.order_by(notice.id.desc()).limit(31).all(),
+                       key=lambda item: item.id, reverse=True)
+        return {'items': [{'id': item.id, 'title': item.title, 'body': item.body,
+                           'broadcast': item.user_id is None,
+                           'created_at': item.created_at.isoformat() + 'Z'} for item in items[:30]],
+                'next_before': items[29].id if len(items) > 30 else None}
 
     @router.put('/notifications/settings')
     def save_preferences(data:PreferenceInput,u=Depends(get_current_user),db=Depends(get_db)):
@@ -510,7 +548,7 @@ def install_features(app):
 
     @router.get('/billing/status')
     def billing(u=Depends(get_current_user)):
-        return {'premium':premium(u),'pet_limit':None if premium(u) else 3,'is_admin':u.is_admin,'premium_until':u.premium_until}
+        return {'premium':premium(u),'pet_limit':None if premium(u) else FREE_PET_LIMIT,'is_admin':u.is_admin,'premium_until':u.premium_until}
 
     @router.get('/account/export')
     def export(u=Depends(get_current_user),db=Depends(get_db)):

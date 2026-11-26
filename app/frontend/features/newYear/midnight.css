@@ -1,0 +1,37 @@
+.midnight-greeting[open] {
+  position: fixed; inset: 0; display: grid; place-items: center; width: 100%; height: 100%;
+  max-width: none; max-height: none; margin: 0; padding: 0; overflow: hidden;
+  border: 0; border-radius: 0; color: #fff1d5; isolation: isolate;
+  background: radial-gradient(ellipse at 50% 45%, #1d3333, #0c161e 57%, #050910);
+  animation: midnight-dim .45s ease-out both;
+}
+.midnight-greeting::backdrop { background: #050910; animation: midnight-dim .45s ease-out both; }
+.midnight-sky { position: absolute; inset: 0; pointer-events: none; }
+.midnight-burst { position: absolute; }
+.midnight-burst i {
+  --radius: clamp(42px, 12vw, 145px);
+  position: absolute; width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 12px 2px currentColor, -12px 5px 4px -1px currentColor;
+  opacity: 0; animation: midnight-spark 2.1s var(--burst-delay) cubic-bezier(.1,.52,.45,1) both;
+}
+.midnight-message { position: relative; padding: 18px; text-align: center; animation: midnight-title .85s .35s both; }
+.midnight-message h2 { margin: 0; color: inherit; font-size: clamp(32px, 8vw, 88px); line-height: 1.02; letter-spacing: -.05em; }
+.midnight-message strong { display: block; font-size: 1.65em; color: #ffda8d; text-shadow: 0 0 40px #eb9b4d52; }
+.midnight-message p { margin: 16px 0 0; font-size: clamp(14px, 3vw, 20px); }
+.midnight-close {
+  position: absolute; bottom: max(22px, env(safe-area-inset-bottom)); min-height: 44px;
+  padding: 8px 18px; border: 1px solid #e7c48f79; border-radius: 30px;
+  background: #18262d; color: #fff1d5; font: inherit; cursor: pointer;
+}
+.midnight-close:focus-visible { outline: 2px solid #ffda8d; outline-offset: 3px; }
+@keyframes midnight-dim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes midnight-title { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes midnight-spark {
+  0% { opacity: 0; transform: rotate(var(--ray)) translateX(0) scale(.35); }
+  15% { opacity: .95; }
+  65% { opacity: .6; }
+  100% { opacity: 0; transform: rotate(var(--ray)) translateX(calc(var(--radius) * var(--distance))) scale(.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .midnight-greeting[open], .midnight-greeting::backdrop, .midnight-message, .midnight-burst i { animation: none; }
+}

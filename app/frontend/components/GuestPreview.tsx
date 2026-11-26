@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { language, uiText } from '../i18n';
 import { LanguagePicker } from '../i18n/LanguagePicker';
 import { BetaFeedbackButton } from './BetaFeedback';
@@ -14,7 +15,7 @@ export function LockIcon() {
   return <svg className="guest-lock-icon" aria-hidden="true"><use href="#lock" /></svg>;
 }
 
-export function GuestPreview() {
+export function GuestPreview({ greeting }: { greeting: ReactNode }) {
   return <section className="guest-preview" id="guest-preview" aria-labelledby="guest-preview-title" hidden>
     <header><LanguagePicker />
       <p className="guest-preview-label">{uiText("Гостевой режим")}</p>
@@ -22,6 +23,7 @@ export function GuestPreview() {
       <p id="guest-preview-hint">{uiText("Войдите или зарегистрируйтесь, чтобы открыть разделы.")}</p>
       <a href={language === 'en' ? '/about?lang=en' : '/about'}>{uiText("О возможностях PetCare")}</a>
     </header>
+    {greeting}
     <ul className="guest-grid">
       {sections.map(section => <li key={section.name}>
         <button type="button" className="guest-card" data-guest-lock aria-haspopup="dialog" aria-describedby="guest-preview-hint">

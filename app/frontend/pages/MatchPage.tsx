@@ -143,7 +143,7 @@ export function MatchPage() {
               </label>
               <label className="field full">
                 {(uiText("Контакты хозяина для связи (обязательно)")+"\n              ")}
-                <input name="owner_contact" type="text" required placeholder={uiText("Telegram: @username, телефон +7 (999) 000-00-00 или WhatsApp")} />
+                <input name="owner_contact" type="text" required placeholder={uiText("Telegram: @username, телефон +1 (999) 000-00-00 или WhatsApp")} />
               </label>
               <label className="field full">
                 {(uiText("О питомце (характер, привычки, кого ищете)")+"\n              ")}

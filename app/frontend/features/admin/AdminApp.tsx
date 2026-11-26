@@ -1,10 +1,11 @@
-import { formatLocale, uiText } from '../../i18n';
+import { formatLocale, language, uiText } from '../../i18n';
 import { LanguagePicker } from '../../i18n/LanguagePicker';
-import { BrandName } from '../../components/Brand';
+import { Brand, BrandName } from '../../components/Brand';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ApiError, createApiClient, hasBrowserSession } from '../../lib/api';
 import { appendSample, ServerMetrics, type Stats } from './ServerMetrics';
 import { maxPremiumPrice, periods, type Prices } from '../billing/periods';
+import { useNewYearAppearance } from '../newYear/season';
 import './admin.css';
 
 const PAGE = 50;
@@ -24,7 +25,14 @@ type Login = { user: User };
 type History = { sessions: Session[]; total: number };
 type Audit = { actor_id: number; target_id: number; action: string; at: string };
 type Block = { ip_address: string; blocked_at: string; failures: number };
-type View = 'users' | 'premium' | 'settings' | 'blocks' | 'audit';
+type View = 'users' | 'premium' | 'notifications' | 'settings' | 'blocks' | 'audit';
+const broadcastCopy = language === 'en' ? {
+  tab: 'Broadcasts', heading: 'Notify all users', description: 'The message appears in each user’s notification centre. Devices with push enabled receive it even when PetCare is closed.',
+  title: 'Title', body: 'Message', send: 'Send to everyone', confirm: 'Send this message to all PetCare users?', success: 'Published. Push delivery has been queued.',
+} : {
+  tab: 'Рассылки', heading: 'Уведомление всем пользователям', description: 'Сообщение появится в центре уведомлений у всех пользователей. На устройства с включёнными push оно придёт даже при закрытом PetCare.',
+  title: 'Заголовок', body: 'Текст уведомления', send: 'Отправить всем', confirm: 'Отправить это сообщение всем пользователям PetCare?', success: 'Уведомление опубликовано. Push поставлены в очередь.',
+};
 type AccountAction = 'edit' | 'password' | 'delete';
 
 const dateTime = (value: string | null) => {
@@ -44,6 +52,10 @@ function initialToken() {
 }
 
 export function AdminApp() {
+  const { active, mode } = useNewYearAppearance();
+  const festiveBrand = active && mode === 'max';
+  const brand = festiveBrand ? <Brand /> : <BrandName />;
+  const broadcastDraft = useRef<{ request_id: string; title: string; body: string } | null>(null);
   const token = useRef(initialToken());
   const polling = useRef<AbortController | null>(null);
   const lastPoll = useRef(0);
@@ -276,7 +288,7 @@ export function AdminApp() {
   if (!actor) return (
     <main className="admin-login">
       <div className="admin-login-card">
-        <p className="admin-kicker"><BrandName /></p>
+        <p className="admin-kicker" data-festive-brand={festiveBrand || undefined}>{brand}</p>
         <LanguagePicker />
         <h1>{uiText("Вход администратора")}</h1>
         <form onSubmit={login} className="admin-fields">
@@ -294,10 +306,10 @@ export function AdminApp() {
 
   return <div className="admin-shell">
     <aside className="admin-nav">
-      <span className="admin-kicker"><BrandName /></span><LanguagePicker />
+      <span className="admin-kicker" data-festive-brand={festiveBrand || undefined}>{brand}</span><LanguagePicker />
       <strong>{uiText("Управление")}</strong>
       <nav aria-label={uiText("Разделы панели")}>
-        {([['users', uiText("Пользователи")], ['premium', uiText("Тарифы Premium")], ['settings', uiText("Настройки")], ['blocks', uiText("Блокировки IP")], ['audit', uiText("Журнал действий")]] as const).map(([key, label]) =>
+        {([['users', uiText("Пользователи")], ['premium', uiText("Тарифы Premium")], ['notifications', broadcastCopy.tab], ['settings', uiText("Настройки")], ['blocks', uiText("Блокировки IP")], ['audit', uiText("Журнал действий")]] as const).map(([key, label]) =>
           <button key={key} type="button" aria-current={view === key ? 'page' : undefined} onClick={() => openView(key)}>{label}</button>)}
       </nav>
       <button type="button" disabled={busy} onClick={() => void task(async () => {
@@ -458,6 +470,31 @@ export function AdminApp() {
           <button type="submit" className="admin-primary" disabled={busy}>{uiText('Сохранить цены')}</button>
         </form> : busy ? <p role="status">{uiText('Загружаем…')}</p> :
           <button type="button" onClick={() => openView('premium')}>{uiText('Повторить')}</button>}
+      </section>}
+      {view === 'notifications' && <section className="admin-panel">
+        <h2>{broadcastCopy.heading}</h2>
+        <p className="admin-muted">{broadcastCopy.description}</p>
+        <form className="admin-fields" onSubmit={event => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const fields = new FormData(form);
+          const title = String(fields.get('title')).trim();
+          const body = String(fields.get('body')).trim();
+          if (!window.confirm(broadcastCopy.confirm)) return;
+          const previous = broadcastDraft.current;
+          const draft = previous?.title === title && previous.body === body
+            ? previous : { request_id: crypto.randomUUID(), title, body };
+          broadcastDraft.current = draft;
+          void task(async () => {
+            await api('/admin/notifications', write('POST', draft));
+            broadcastDraft.current = null;
+            form.reset();
+          }, broadcastCopy.success);
+        }}>
+          <label>{broadcastCopy.title}<input name="title" maxLength={120} required /></label>
+          <label>{broadcastCopy.body}<textarea name="body" rows={5} maxLength={2000} required /></label>
+          <button type="submit" className="admin-primary" disabled={busy}>{broadcastCopy.send}</button>
+        </form>
       </section>}
       {view === 'settings' && <section className="admin-panel">
         <h2>{uiText("Способ связи с поддержкой")}</h2>

@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text as SQLText, JSON
+from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, ForeignKey, Float, Text as SQLText, JSON, Index
 from sqlalchemy.dialects.mysql import MEDIUMTEXT, DATETIME, DOUBLE
 from sqlalchemy.orm import column_property, deferred, relationship
 
@@ -346,6 +346,26 @@ class DeliveryReceipt(Base):
     __tablename__ = "delivery_receipts"
     key = Column(String(64), primary_key=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InboxNotice(Base):
+    __tablename__ = 'inbox_notices'
+    __table_args__ = (Index('ix_inbox_notices_user_id_id', 'user_id', 'id'),)
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(64), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    title = Column(String(120), nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class BroadcastDelivery(Base):
+    __tablename__ = 'broadcast_deliveries'
+
+    notice_id = Column(Integer, ForeignKey('inbox_notices.id', ondelete='CASCADE'), primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('push_subscriptions.id', ondelete='CASCADE'), primary_key=True)
+    retry_at = Column(DateTime, nullable=True)
 
 class RecoveryAction(Base):
     __tablename__ = "recovery_actions"

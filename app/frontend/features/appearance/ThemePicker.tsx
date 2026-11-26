@@ -1,6 +1,7 @@
 import { uiText } from '../../i18n';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { chooseTheme, getAppearance, subscribeAppearance, themes } from './store';
+import { NewYearPicker } from '../newYear/NewYearPicker';
 
 export function ThemePicker() {
   const { accountId, theme, saving, feedback } = useSyncExternalStore(subscribeAppearance, getAppearance);
@@ -76,6 +77,7 @@ export function ThemePicker() {
         ))}
       </div>
       <p className="theme-feedback" role="status">{feedback || uiText("Тема сохраняется на этом устройстве и в вашем аккаунте.")}</p>
+      <NewYearPicker />
     </section>
   );
 }

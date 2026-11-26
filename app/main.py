@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from urllib.parse import quote
 from uploads import enforce_attachment_quota, validate_attachment
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_, select
 
 from settings import ENABLE_DEMO_LOGIN, PRODUCTION
@@ -149,12 +149,12 @@ def pet_response(pet, user_id, detail=False):
     return result
 
 
-def active_member_pet_ids(db, user_id):
-    return [row.pet_id for row in db.query(models.PetMember).filter(
+def active_member_pet_ids(user_id):
+    return select(models.PetMember.pet_id).where(
         models.PetMember.user_id == user_id,
         models.PetMember.role.in_(['viewer', 'editor', 'co_owner']),
         or_(models.PetMember.expires_at.is_(None), models.PetMember.expires_at > datetime.utcnow()),
-    ).all()]
+    )
 
 
 def user_has_pet_access(pet_id: int, user_id: int, db: Session, write: bool = False) -> bool:
@@ -833,8 +833,8 @@ def get_user_pets(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = active_member_pet_ids(db, current_user.id)
-    pets = db.query(models.Pet).filter(
+    member_pet_ids = active_member_pet_ids(current_user.id)
+    pets = db.query(models.Pet).options(selectinload(models.Pet.members)).filter(
         (models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids))
     ).all()
     needs_commit = False
@@ -1270,12 +1270,10 @@ def get_all_reminders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    member_pet_ids = active_member_pet_ids(db, current_user.id)
-    query = db.query(models.Reminder).join(models.Pet)
-    if member_pet_ids:
-        query = query.filter((models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids)))
-    else:
-        query = query.filter(models.Pet.owner_id == current_user.id)
+    member_pet_ids = active_member_pet_ids(current_user.id)
+    query = db.query(models.Reminder).join(models.Pet).filter(
+        (models.Pet.owner_id == current_user.id) | (models.Pet.id.in_(member_pet_ids))
+    )
     return query.order_by(models.Reminder.due_date.asc()).all()
 
 

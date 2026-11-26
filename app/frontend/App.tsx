@@ -10,19 +10,25 @@ import { NutritionPage } from './pages/NutritionPage';
 import { CarePage } from './pages/CarePage';
 import { MatchPage } from './pages/MatchPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { NewYearBanner } from './features/newYear/NewYearBanner';
+import { MidnightGreeting } from './features/newYear/MidnightGreeting';
+import { useNewYearAppearance } from './features/newYear/season';
 
 // Legacy code fills empty data containers. This shell mounts once and does not
 // reconcile their contents; NutritionTools owns its entire subtree in React.
 export function App() {
+  const { active, mode } = useNewYearAppearance();
+  const festive = active && mode !== 'off';
+  const greeting = festive && <NewYearBanner />;
   return <>
     <Icons />
-    <div className="app" id="petcare-shell" data-session-view="loading" inert>
+    <div className="app" id="petcare-shell" data-session-view="loading" data-new-year={festive ? mode : undefined} inert>
       <a className="skip-link" href="#main-content">{uiText("К содержимому")}</a>
       <Sidebar />
       <main className="content" id="main-content" tabIndex={-1}>
         <AppHeader />
-        <GuestPreview />
-        <PetsPage />
+        <GuestPreview greeting={greeting} />
+        <PetsPage greeting={greeting} />
         <HealthPage />
         <NutritionPage />
         <CarePage />
@@ -31,6 +37,7 @@ export function App() {
       </main>
     </div>
     <Dialogs />
+    {festive && <MidnightGreeting />}
     <div id="connection-status" className="connection-status" role="status" hidden>
       <span className="connection-spinner" aria-hidden="true" />
       <span id="connection-message">{uiText("Загружаем данные…")}</span>

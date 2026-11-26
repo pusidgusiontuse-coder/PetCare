@@ -108,7 +108,7 @@ export function PremiumPlan() {
           <button type="submit" className="modal-close" aria-label={uiText("Закрыть выбор периода")} />
         </form>
         <h2 id="premium-title">PetCare Premium</h2>
-        <p className="premium-intro">{uiText("Добавляйте больше трёх питомцев.")}</p>
+        <p className="premium-intro">{uiText("Добавляйте больше одного питомца.")}</p>
         {plans && <><fieldset className="premium-periods" disabled={busy}>
           <legend>{uiText("Выберите период")}</legend>
           {periods.map(period => {

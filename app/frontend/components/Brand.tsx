@@ -6,6 +6,10 @@ export function BrandName() {
   </span>;
 }
 
+export function BrandMark() {
+  return <span className="brand-emblem" aria-hidden="true"><span className="brand-mark" /></span>;
+}
+
 export function Brand() {
-  return <><span className="brand-mark" aria-hidden="true" /><BrandName /></>;
+  return <><BrandMark /><BrandName /></>;
 }
